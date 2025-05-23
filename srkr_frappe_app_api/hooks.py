@@ -242,3 +242,6 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+override_doctype_class = {
+    "Course Scheduling Tool": "srkr_frappe_app_api.overrides.CustomCourseSchedulingTool"
+}
