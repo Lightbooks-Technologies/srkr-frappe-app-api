@@ -5,22 +5,6 @@ app_description = "Srkr frappe app api"
 app_email = "info@lightbooks.io"
 app_license = "mit"
 
-# Apps
-# ------------------
-
-# required_apps = []
-
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "srkr_frappe_app_api",
-# 		"logo": "/assets/srkr_frappe_app_api/logo.png",
-# 		"title": "Srkr Frappe App Api",
-# 		"route": "/srkr_frappe_app_api",
-# 		"has_permission": "srkr_frappe_app_api.api.permission.has_app_permission"
-# 	}
-# ]
-
 # Includes in <head>
 # ------------------
 
@@ -32,52 +16,17 @@ app_license = "mit"
 # web_include_css = "/assets/srkr_frappe_app_api/css/srkr_frappe_app_api.css"
 # web_include_js = "/assets/srkr_frappe_app_api/js/srkr_frappe_app_api.js"
 
-# include custom scss in every website theme (without file extension ".scss")
-# website_theme_scss = "srkr_frappe_app_api/public/scss/website"
-
-# include js, css files in header of web form
-# webform_include_js = {"doctype": "public/js/doctype.js"}
-# webform_include_css = {"doctype": "public/css/doctype.css"}
-
-# include js in page
-# page_js = {"page" : "public/js/file.js"}
-
-# include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
-# doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
-
-# Svg Icons
-# ------------------
-# include app icons in desk
-# app_include_icons = "srkr_frappe_app_api/public/icons.svg"
-
 # Home Pages
 # ----------
 
 # application home page (will override Website Settings)
 # home_page = "login"
 
-# website user home page (by Role)
-# role_home_page = {
-# 	"Role": "home_page"
-# }
-
 # Generators
 # ----------
 
 # automatically create page for each record of this doctype
 # website_generators = ["Web Page"]
-
-# Jinja
-# ----------
-
-# add methods and filters to jinja environment
-# jinja = {
-# 	"methods": "srkr_frappe_app_api.utils.jinja_methods",
-# 	"filters": "srkr_frappe_app_api.utils.jinja_filters"
-# }
 
 # Installation
 # ------------
@@ -90,48 +39,6 @@ app_license = "mit"
 
 # before_uninstall = "srkr_frappe_app_api.uninstall.before_uninstall"
 # after_uninstall = "srkr_frappe_app_api.uninstall.after_uninstall"
-
-# Integration Setup
-# ------------------
-# To set up dependencies/integrations with other apps
-# Name of the app being installed is passed as an argument
-
-# before_app_install = "srkr_frappe_app_api.utils.before_app_install"
-# after_app_install = "srkr_frappe_app_api.utils.after_app_install"
-
-# Integration Cleanup
-# -------------------
-# To clean up dependencies/integrations with other apps
-# Name of the app being uninstalled is passed as an argument
-
-# before_app_uninstall = "srkr_frappe_app_api.utils.before_app_uninstall"
-# after_app_uninstall = "srkr_frappe_app_api.utils.after_app_uninstall"
-
-# Desk Notifications
-# ------------------
-# See frappe.core.notifications.get_notification_config
-
-# notification_config = "srkr_frappe_app_api.notifications.get_notification_config"
-
-# Permissions
-# -----------
-# Permissions evaluated in scripted ways
-
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
-
-# DocType Class
-# ---------------
-# Override standard doctype classes
-
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
 
 # Document Events
 # ---------------
@@ -199,11 +106,6 @@ app_license = "mit"
 # before_request = ["srkr_frappe_app_api.utils.before_request"]
 # after_request = ["srkr_frappe_app_api.utils.after_request"]
 
-# Job Events
-# ----------
-# before_job = ["srkr_frappe_app_api.utils.before_job"]
-# after_job = ["srkr_frappe_app_api.utils.after_job"]
-
 # User Data Protection
 # --------------------
 
@@ -234,14 +136,3 @@ app_license = "mit"
 # auth_hooks = [
 # 	"srkr_frappe_app_api.auth.validate"
 # ]
-
-# Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
-
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
-
-override_doctype_class = {
-    "Course Scheduling Tool": "srkr_frappe_app_api.overrides.CustomCourseSchedulingTool"
-}
