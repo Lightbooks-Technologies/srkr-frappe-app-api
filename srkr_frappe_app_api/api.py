@@ -1,4 +1,6 @@
 import frappe
+from frappe.utils import get_datetime, get_time_str, get_datetime_str, getdate
+import json # For pretty printing dictionaries if needed
 
 @frappe.whitelist(allow_guest=True)
 def hello_world():
@@ -121,3 +123,97 @@ def get_user_details(email_id): # Changed parameter name for clarity
         return {"error": "An unexpected error occurred while fetching user details."}
 
     return user_data
+
+@frappe.whitelist()
+def get_student_daily_class_attendance(student, date):
+    if not student or not date:
+        frappe.throw("Student ID and Date are required.")
+
+    date_str_for_filter = date
+    try:
+        parsed_date_obj = getdate(date)
+        date_str_for_filter = parsed_date_obj.strftime('%Y-%m-%d')
+    except ValueError:
+        frappe.throw(f"Invalid date format provided: '{date}'. Please ensure it's a valid date like YYYY-MM-DD.")
+    except Exception as e: # Catch any other unexpected error during date processing
+        frappe.throw(f"Error processing date: {e}")
+
+    attendance_filters = {
+        "student": student,
+        "date": date_str_for_filter,
+        "docstatus": 1 # Assuming you want submitted attendance
+    }
+    
+    student_attendance_fields = ["name", "status", "course_schedule"]
+    
+    attendance_records = frappe.get_all(
+        "Student Attendance",
+        filters=attendance_filters,
+        fields=student_attendance_fields
+    )
+
+    if not attendance_records:
+        return [] # No attendance records found for this student/date
+
+    detailed_attendance = []
+
+    for record in attendance_records:
+        course_name_val = None # Renamed from course_name to avoid conflict with Course DocType's field
+        start_datetime_str = None
+        end_datetime_str = None
+        status_color = "green" if record.status == "Present" else ("red" if record.status == "Absent" else "orange")
+
+        if record.get("course_schedule"):
+            course_schedule_name = record.get("course_schedule")
+            try:
+                course_schedule_details = frappe.get_doc("Course Schedule", course_schedule_name)
+                
+                if course_schedule_details.course:
+                    try:
+                        # Assuming 'Course Schedule.course' is a Link to 'Course' DocType
+                        # And 'Course' DocType has a 'course_name' field for the display name
+                        course_doc = frappe.get_doc("Course", course_schedule_details.course)
+                        course_name_val = course_doc.course_name
+                    except frappe.DoesNotExistError:
+                        # Log this error if you want, e.g., frappe.log_error(...)
+                        course_name_val = f"Unknown Course ({course_schedule_details.course})"
+                    except Exception: 
+                        # Log this error
+                        course_name_val = f"Error fetching course ({course_schedule_details.course})"
+                else:
+                    course_name_val = "Course Not Specified in Schedule"
+
+                from_time_obj = course_schedule_details.from_time
+                to_time_obj = course_schedule_details.to_time
+
+                if from_time_obj and to_time_obj:
+                    # Ensure time objects if they are strings
+                    if isinstance(from_time_obj, str): 
+                        from_time_obj = frappe.utils.get_time(from_time_obj)
+                    if isinstance(to_time_obj, str): 
+                        to_time_obj = frappe.utils.get_time(to_time_obj)
+                    
+                    start_datetime_str = get_datetime_str(get_datetime(f"{date_str_for_filter} {get_time_str(from_time_obj)}"))
+                    end_datetime_str = get_datetime_str(get_datetime(f"{date_str_for_filter} {get_time_str(to_time_obj)}"))
+                # else: Log if times are missing in course schedule (optional)
+            
+            except frappe.DoesNotExistError:
+                # Log this error
+                course_name_val = f"Course Schedule Missing ({course_schedule_name})"
+            except Exception: # Catch any other error during CS processing
+                # Log this error
+                course_name_val = f"Error processing Course Schedule ({course_schedule_name})"
+        # else: course_schedule link is empty, so class details remain None
+
+        entry = {
+            "date": date_str_for_filter,
+            "status": record.status,
+            "name": record.name, # This is the Student Attendance DocName
+            "class": course_name_val, # Changed from "course_name" to "class" as per your desired output
+            "start_time": start_datetime_str,
+            "end_time": end_datetime_str,
+            "color": status_color
+        }
+        detailed_attendance.append(entry)
+
+    return detailed_attendance
