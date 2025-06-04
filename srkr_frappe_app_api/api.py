@@ -261,3 +261,4 @@ def get_student_daily_class_attendance(student, start_date, end_date=None):
         detailed_attendance.append(entry)
 
     return detailed_attendance
+
