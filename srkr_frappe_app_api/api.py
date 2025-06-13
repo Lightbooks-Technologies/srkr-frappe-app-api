@@ -160,105 +160,109 @@ def get_student_daily_class_attendance(student, start_date, end_date=None):
         ["date", "between", [start_date_str, end_date_str]],
         ["docstatus", "=", 1] # Assuming submitted attendance
     ]
-    
+
     student_attendance_fields = ["name", "status", "course_schedule", "date"]
-    
+
     attendance_records = frappe.get_all(
         "Student Attendance",
         filters=attendance_filters,
         fields=student_attendance_fields,
-        order_by="date asc, name asc" # Optional: order results
+        order_by="date asc, name asc"
     )
 
     if not attendance_records:
-        return [] 
+        return []
 
     detailed_attendance = []
 
     for record in attendance_records:
-        current_record_date_obj = record.date 
+        # --- CHECK IF COURSE SCHEDULE IS LINKED ---
+        if not record.get("course_schedule"):
+            # Optional: Log that this record is being skipped
+            # frappe.log_message(
+            #     title="API: Missing Course Schedule",
+            #     message=f"Student Attendance record '{record.name}' for student '{student}' on {record.date.strftime('%Y-%m-%d')} has no Course Schedule linked. Skipping."
+            # )
+            continue # Skip processing this record and move to the next one
+        # --- END OF CHECK ---
+
+        current_record_date_obj = record.date
         current_record_date_str = current_record_date_obj.strftime('%Y-%m-%d')
 
+        # Initialize variables that depend on Course Schedule details
         class_name_val = None
         course_actual_id = None
         calendar_id_val = None
         course_schedule_color_val = None
-        start_datetime_formatted = None 
-        end_datetime_formatted = None   
-        
+        start_datetime_formatted = None
+        end_datetime_formatted = None
+
         attendance_status_color = "green" if record.status == "Present" else ("red" if record.status == "Absent" else "orange")
 
-        if record.get("course_schedule"):
-            course_schedule_name = record.get("course_schedule")
-            try:
-                course_schedule_details = frappe.get_doc("Course Schedule", course_schedule_name)
-                
-                course_schedule_color_val = course_schedule_details.get("color") or course_schedule_details.get("class_schedule_color")
+        # Since we passed the check, record.get("course_schedule") is guaranteed to have a value.
+        course_schedule_name = record.get("course_schedule")
+        try:
+            course_schedule_details = frappe.get_doc("Course Schedule", course_schedule_name)
 
-                if course_schedule_details.course:
-                    course_actual_id = course_schedule_details.course 
-                    try:
-                        course_doc = frappe.get_doc("Course", course_actual_id)
-                        class_name_val = course_doc.course_name
-                        
-                        if course_actual_id: 
-                            temp_id = str(course_actual_id).lower().strip() 
-                            calendar_id_val = re.sub(r'\s+', '_', temp_id)
-                        
-                    except frappe.DoesNotExistError:
-                        # You might want to log this error for monitoring
-                        # frappe.log_error(message=f"Course Doc NOT FOUND: {course_actual_id} for CS {course_schedule_name}", title="API Get Student Attendance")
-                        class_name_val = f"Unknown Course ({course_actual_id})"
-                    except Exception as e_course:
-                        # frappe.log_error(message=f"ERROR fetching/processing Course Doc '{course_actual_id}': {e_course}", title="API Get Student Attendance")
-                        class_name_val = f"Error fetching course ({course_actual_id})"
-                else:
-                    class_name_val = "Course Not Specified in Schedule"
+            course_schedule_color_val = course_schedule_details.get("color") or course_schedule_details.get("class_schedule_color")
 
-                from_time_obj = course_schedule_details.from_time
-                to_time_obj = course_schedule_details.to_time
+            if course_schedule_details.course:
+                course_actual_id = course_schedule_details.course
+                try:
+                    course_doc = frappe.get_doc("Course", course_actual_id)
+                    class_name_val = course_doc.course_name
 
-                if from_time_obj and to_time_obj:
-                    if isinstance(from_time_obj, str):
-                        from_time_obj = frappe.utils.get_time(from_time_obj) 
-                    if isinstance(to_time_obj, str):
-                        to_time_obj = frappe.utils.get_time(to_time_obj)
+                    if course_actual_id:
+                        temp_id = str(course_actual_id).lower().strip()
+                        calendar_id_val = re.sub(r'\s+', '_', temp_id)
 
-                    if isinstance(from_time_obj, timedelta) and isinstance(to_time_obj, timedelta):
-                        from_hours = from_time_obj.seconds // 3600
-                        from_minutes = (from_time_obj.seconds // 60) % 60
-                        
-                        to_hours = to_time_obj.seconds // 3600
-                        to_minutes = (to_time_obj.seconds // 60) % 60
+                except frappe.DoesNotExistError:
+                    class_name_val = f"Unknown Course ({course_actual_id})"
+                except Exception as e_course:
+                    class_name_val = f"Error fetching course ({course_actual_id})"
+            else:
+                class_name_val = "Course Not Specified in Schedule"
 
-                        start_dt_obj = dt.combine(current_record_date_obj, dt.min.time()).replace(hour=from_hours, minute=from_minutes)
-                        end_dt_obj = dt.combine(current_record_date_obj, dt.min.time()).replace(hour=to_hours, minute=to_minutes)
-                        
-                        start_datetime_formatted = start_dt_obj.strftime('%Y-%m-%d %H:%M')
-                        end_datetime_formatted = end_dt_obj.strftime('%Y-%m-%d %H:%M')
-                    # else: You might want to log if time objects are not valid timedelta after conversion
-                # else: You might want to log if from_time or to_time are missing in Course Schedule
-            
-            except frappe.DoesNotExistError:
-                # frappe.log_error(message=f"CS Doc NOT FOUND: {course_schedule_name} for SA {record.name}", title="API Get Student Attendance")
-                class_name_val = f"Course Schedule Missing ({course_schedule_name})"
-            except Exception as e_cs: 
-                # frappe.log_error(message=f"GENERIC ERROR processing CS Doc '{course_schedule_name}': {e_cs}", title="API Get Student Attendance")
-                class_name_val = f"Error processing CS ({course_schedule_name})"
-        # else: Student Attendance record has no Course Schedule link.
+            from_time_obj = course_schedule_details.from_time
+            to_time_obj = course_schedule_details.to_time
+
+            if from_time_obj and to_time_obj:
+                if isinstance(from_time_obj, str):
+                    from_time_obj = frappe.utils.get_time(from_time_obj)
+                if isinstance(to_time_obj, str):
+                    to_time_obj = frappe.utils.get_time(to_time_obj)
+
+                if isinstance(from_time_obj, timedelta) and isinstance(to_time_obj, timedelta):
+                    from_hours = from_time_obj.seconds // 3600
+                    from_minutes = (from_time_obj.seconds // 60) % 60
+
+                    to_hours = to_time_obj.seconds // 3600
+                    to_minutes = (to_time_obj.seconds // 60) % 60
+
+                    start_dt_obj = dt.combine(current_record_date_obj, dt.min.time()).replace(hour=from_hours, minute=from_minutes)
+                    end_dt_obj = dt.combine(current_record_date_obj, dt.min.time()).replace(hour=to_hours, minute=to_minutes)
+
+                    start_datetime_formatted = start_dt_obj.strftime('%Y-%m-%d %H:%M')
+                    end_datetime_formatted = end_dt_obj.strftime('%Y-%m-%d %H:%M')
+                # else: Time objects are not valid timedelta after conversion (start/end will remain None)
+            # else: from_time or to_time are missing in Course Schedule (start/end will remain None)
+
+        except frappe.DoesNotExistError:
+            class_name_val = f"Course Schedule Missing ({course_schedule_name})" # CS doc itself not found
+        except Exception as e_cs:
+            class_name_val = f"Error processing CS ({course_schedule_name})"
 
         entry = {
-            "date": current_record_date_str, 
+            "date": current_record_date_str,
             "status": record.status,
             "attendance_record_name": record.name,
             "title": class_name_val,
             "calendar_id": calendar_id_val,
-            "start": start_datetime_formatted, 
-            "end": end_datetime_formatted,   
+            "start": start_datetime_formatted,
+            "end": end_datetime_formatted,
             "attendance_status_color": attendance_status_color,
             "course_schedule_color": course_schedule_color_val
         }
         detailed_attendance.append(entry)
 
     return detailed_attendance
-
