@@ -174,73 +174,168 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
 def get_instructor_info():
     """
     Fetches information for the currently logged-in user if they are linked to an Employee record.
-    Returns specific fields including an 'instructor_id'.
+    Also fetches instructor name from Instructor doctype if linked.
+    Returns specific fields including an 'instructor_id' and 'instructor_name'.
     """
     current_user_email = frappe.session.user
 
     if current_user_email == "Administrator":
-        # frappe.msgprint("Administrator account selected. No specific instructor profile to display.")
         return {"message": "Administrator account selected. No specific instructor profile to display."}
-
 
     employee_doc_name = None # To store the name/ID of the employee document
 
     # Method 1: Check if User doc is directly linked to an Employee
-    # Standard Frappe links User.name (email) to Employee via User.employee (Link field)
     user_doc = frappe.get_doc("User", current_user_email)
-    if user_doc.get("employee"): # Use .get() for safety
+    print(f"User document fetched for {current_user_email}: {user_doc.name}, Employee: {user_doc.get('employee')}")
+    if user_doc.get("employee"):
         employee_doc_name = user_doc.employee
     
     # Method 2: If not directly linked, try to find Employee by email matching fields
     if not employee_doc_name:
-        # Field in Employee DocType that might store the login email/user ID
-        # Common possibilities: 'user_id', 'company_email', 'personal_email'
         email_match_fields = ["user_id", "company_email", "personal_email"] 
         for field_name in email_match_fields:
             employee_found = frappe.get_all(
                 "Employee",
                 filters={field_name: current_user_email},
-                fields=["name"], # We only need the name (ID)
+                fields=["name"],
                 limit=1
             )
             if employee_found:
                 employee_doc_name = employee_found[0].name
-                break # Found one, no need to check other email fields
+                break
     
     if employee_doc_name:
         try:
             employee_doc = frappe.get_doc("Employee", employee_doc_name)
             
-            # Define the specific fields you want from the Employee document
-            # Adjust these field names based on your Employee DocType
+            # Base instructor info from Employee doctype
             instructor_info = {
-                "instructor_id": employee_doc.name, # This is the unique ID
-                "employee_name": employee_doc.get("employee_name"), # Full name
+                "instructor_id": employee_doc.name,
+                "employee_name": employee_doc.get("employee_name"),
                 "first_name": employee_doc.get("first_name"),
                 "last_name": employee_doc.get("last_name"),
                 "gender": employee_doc.get("gender"),
                 "date_of_birth": employee_doc.get("date_of_birth"),
-                "company_email": employee_doc.get("company_email"), # Or 'user_id' if that's the primary email
+                "company_email": employee_doc.get("company_email"),
                 "department": employee_doc.get("department"),
                 "designation": employee_doc.get("designation"),
-                "image": employee_doc.get("image"), # Profile image URL
-                # Add any other fields you need from the Employee doctype
-                # e.g., "cell_number", "employment_type", etc.
+                "image": employee_doc.get("image"),
             }
             
-            # Remove keys where the value is None, if desired
-            # instructor_info = {k: v for k, v in instructor_info.items() if v is not None}
+            # Try to fetch instructor name from Instructor doctype using employee field
+            instructor_found = frappe.get_all(
+                "Instructor",
+                filters={"employee": employee_doc_name},  # Link using employee field
+                fields=["instructor_name", "name"],  # Get both instructor_name and instructor ID
+                limit=1
+            )
+            
+            if instructor_found:
+                instructor_info["instructor_name"] = instructor_found[0].instructor_name
+                instructor_info["instructor_record_id"] = instructor_found[0].name  # Optional: include instructor record ID
+                print(f"Found instructor name: {instructor_found[0].instructor_name} with ID: {instructor_found[0].name}")
+            else:
+                instructor_info["instructor_name"] = None
+                instructor_info["instructor_record_id"] = None
+                print(f"No instructor record found for employee: {employee_doc_name}")
 
             return instructor_info
             
         except frappe.DoesNotExistError:
-            # This case should be rare if employee_doc_name was found via get_all
-            # frappe.msgprint(f"Employee record {employee_doc_name} not found, though it was expected.")
             return {"error": f"Employee record {employee_doc_name} could not be fully loaded."}
         except Exception as e:
-            # frappe.msgprint(f"An error occurred while fetching employee details: {str(e)}")
             return {"error": f"An error occurred: {str(e)}"}
     else:
-        # frappe.msgprint(f"No Employee record found linked to user {current_user_email}.")
         return {"message": f"No Employee record found linked to user {current_user_email}."}
+    """
+    Fetches information for the currently logged-in user if they are linked to an Employee record.
+    Also fetches instructor name from Instructor doctype if linked.
+    Returns specific fields including an 'instructor_id' and 'instructor_name'.
+    """
+    current_user_email = frappe.session.user
 
+    if current_user_email == "Administrator":
+        return {"message": "Administrator account selected. No specific instructor profile to display."}
+
+    employee_doc_name = None # To store the name/ID of the employee document
+
+    # Method 1: Check if User doc is directly linked to an Employee
+    user_doc = frappe.get_doc("User", current_user_email)
+    print(f"User document fetched for {current_user_email}: {user_doc.name}, Employee: {user_doc.get('employee')}")
+    if user_doc.get("employee"):
+        employee_doc_name = user_doc.employee
+    
+    # Method 2: If not directly linked, try to find Employee by email matching fields
+    if not employee_doc_name:
+        email_match_fields = ["user_id", "company_email", "personal_email"] 
+        for field_name in email_match_fields:
+            employee_found = frappe.get_all(
+                "Employee",
+                filters={field_name: current_user_email},
+                fields=["name"],
+                limit=1
+            )
+            if employee_found:
+                employee_doc_name = employee_found[0].name
+                break
+    
+    if employee_doc_name:
+        try:
+            employee_doc = frappe.get_doc("Employee", employee_doc_name)
+            print(f"Employee document fetched for {employee_doc_name}: {employee_doc.get('ID')}")
+            print(f"Employee document fields: {employee_doc.as_dict()}")
+            
+            # Base instructor info from Employee doctype
+            instructor_info = {
+                "instructor_id": employee_doc.name,
+                "employee_name": employee_doc.get("employee_name"),
+                "first_name": employee_doc.get("first_name"),
+                "last_name": employee_doc.get("last_name"),
+                "gender": employee_doc.get("gender"),
+                "date_of_birth": employee_doc.get("date_of_birth"),
+                "company_email": employee_doc.get("company_email"),
+                "department": employee_doc.get("department"),
+                "designation": employee_doc.get("designation"),
+                "image": employee_doc.get("image"),
+            }
+            
+            # Try to fetch instructor name from Instructor doctype
+            # Method 1: Look for Instructor record linked by employee ID
+            instructor_found = frappe.get_all(
+                "Instructor",
+                filters={"name": employee_doc_name},  # Assuming instructor ID matches employee ID
+                fields=["instructor_name"],
+                limit=1
+            )
+            
+            if instructor_found:
+                instructor_info["instructor_name"] = instructor_found[0].instructor_name
+                print(f"Found instructor name: {instructor_found[0].instructor_name}")
+            else:
+                # Method 2: Try matching by employee name if direct ID match fails
+                employee_name = employee_doc.get("employee_name")
+                if employee_name:
+                    instructor_by_name = frappe.get_all(
+                        "Instructor",
+                        filters={"instructor_name": employee_name},
+                        fields=["instructor_name"],
+                        limit=1
+                    )
+                    if instructor_by_name:
+                        instructor_info["instructor_name"] = instructor_by_name[0].instructor_name
+                        print(f"Found instructor name by employee name match: {instructor_by_name[0].instructor_name}")
+                    else:
+                        instructor_info["instructor_name"] = None
+                        print("No matching instructor record found")
+                else:
+                    instructor_info["instructor_name"] = None
+                    print("No employee name available for instructor lookup")
+
+            return instructor_info
+            
+        except frappe.DoesNotExistError:
+            return {"error": f"Employee record {employee_doc_name} could not be fully loaded."}
+        except Exception as e:
+            return {"error": f"An error occurred: {str(e)}"}
+    else:
+        return {"message": f"No Employee record found linked to user {current_user_email}."}
