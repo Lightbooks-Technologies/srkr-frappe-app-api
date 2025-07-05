@@ -1,0 +1,26 @@
+{
+ "app_name": "srkr_frappe_app_api",
+ "app_title": "SRKR Frappe App API",
+ "app_publisher": "LB",
+ "app_description": "SRKR API integrations for student results",
+ "app_icon": "octicon octicon-file-directory",
+ "app_color": "grey",
+ "app_email": "info@lightbooks.io",
+ "app_license": "MIT",
+ "modules": [
+   {
+     "module_name": "srkr_frappe_app_api",
+     "color": "#589494",
+     "icon": "octicon octicon-file-directory",
+     "type": "module",
+     "label": "SRKR Frappe App API"
+   },
+   {
+     "module_name": "Education",
+     "color": "#5DA3FA",
+     "icon": "octicon octicon-mortar-board",
+     "type": "module",
+     "label": "Education"
+   }
+ ]
+}
