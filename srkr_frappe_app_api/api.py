@@ -4,6 +4,7 @@ import re
 # import traceback # Not needed without debug prints
 from datetime import timedelta, datetime as dt
 import requests
+from erpnext.education.doctype.student_attendance_tool.student_attendance_tool import get_student_attendance_percentage
 
 @frappe.whitelist(allow_guest=True)
 def hello_world():
@@ -348,3 +349,110 @@ def sync_student_results(student_id):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "SRKR API Sync Error")
         frappe.throw(f"An unexpected error occurred: {e}", title="Sync Error")
+
+@frappe.whitelist()
+def get_student_academic_summary(student):
+    """
+    Fetches the academic summary for a given student, including current courses,
+    attendance, and historical exam results. This powers the mentor's dashboard.
+    """
+    if not student:
+        return None
+
+    # Find the student's current active program enrollment
+    enrollment = frappe.get_all(
+        "Program Enrollment",
+        filters={"student": student, "docstatus": 1},
+        fields=["academic_year", "academic_term", "program"],
+        order_by="creation desc",
+        limit=1
+    )
+    
+    if not enrollment:
+        return {
+            "courses": [],
+            "results": [],
+            "status": "no_enrollment"
+        }
+
+    current_term = enrollment[0].academic_term
+    current_year = enrollment[0].academic_year
+    program = enrollment[0].program
+
+    # 1. Get courses and attendance for the current term
+    course_enrollments = frappe.get_all(
+        "Course Enrollment",
+        filters={"student": student, "academic_term": current_term},
+        fields=["course", "course_name"]
+    )
+
+    courses_data = []
+    for course in course_enrollments:
+        try:
+            attendance = get_student_attendance_percentage(
+                student=student,
+                course=course.course,
+                academic_year=current_year,
+                academic_term=current_term
+            )
+            courses_data.append({
+                "course_code": course.course,
+                "course_name": course.course_name,
+                "attendance": round(attendance, 2)
+            })
+        except Exception as e:
+            frappe.log_error(
+                f"Error fetching attendance for student {student}, course {course.course}: {str(e)}",
+                "Mentorship Dashboard Error"
+            )
+            # If attendance tool fails for a course, record it gracefully
+            courses_data.append({
+                "course_code": course.course,
+                "course_name": course.course_name,
+                "attendance": "N/A"
+            })
+    
+    # 2. Get exam results data from our newly implemented feature
+    results_data = []
+    try:
+        # Get all semester results for the student
+        semester_results = frappe.get_all(
+            "Semester Result",
+            filters={"student": student},
+            fields=["name", "semester", "sgpa", "cgpa", "total_credits", "credits_secured"],
+            order_by="semester desc"
+        )
+        
+        for result in semester_results:
+            # For each semester, get the subject results
+            subject_data = frappe.get_all(
+                "Subject Result",
+                filters={"parent": result.name},
+                fields=["subject_code", "subject_name", "credits", "grade", "result", "exam_session"]
+            )
+            
+            results_data.append({
+                "semester": result.semester,
+                "sgpa": result.sgpa,
+                "cgpa": result.cgpa,
+                "total_credits": result.total_credits,
+                "credits_secured": result.credits_secured,
+                "subjects": subject_data
+            })
+    except Exception as e:
+        frappe.log_error(
+            f"Error fetching exam results for student {student}: {str(e)}",
+            "Mentorship Dashboard Error"
+        )
+        # If there's an error, we'll return an empty results array with an error flag
+        results_data = []
+
+    return {
+        "student": student,
+        "program": program,
+        "academic_term": current_term,
+        "academic_year": current_year,
+        "courses": courses_data,
+        "results": results_data,
+        "status": "success"
+    }
