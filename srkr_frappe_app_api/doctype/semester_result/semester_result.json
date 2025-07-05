@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "autoname": "expression",
+ "creation": "2024-05-31 12:00:00.000000",
+ "custom": 1,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "student",
+  "semester",
+  "regulation",
+  "result_type",
+  "col_break_1",
+  "sgpa",
+  "cgpa",
+  "total_credits",
+  "credits_secured",
+  "sec_break_1",
+  "subjects",
+  "attachments_section",
+  "result_pdf",
+  "api_url"
+ ],
+ "fields": [
+  {
+   "fieldname": "student",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Student",
+   "options": "Student",
+   "reqd": 1
+  },
+  {
+   "fieldname": "semester",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Semester",
+   "options": "Semester",
+   "reqd": 1
+  },
+  {
+   "fieldname": "regulation",
+   "fieldtype": "Link",
+   "label": "Regulation",
+   "options": "Regulation"
+  },
+  {
+   "default": "Regular",
+   "fieldname": "result_type",
+   "fieldtype": "Select",
+   "label": "Result Type",
+   "options": "Regular\nHonors and Minors"
+  },
+  {
+   "fieldname": "col_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sgpa",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "SGPA",
+   "precision": "2"
+  },
+  {
+   "fieldname": "cgpa",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "CGPA",
+   "precision": "2"
+  },
+  {
+   "fieldname": "total_credits",
+   "fieldtype": "Float",
+   "label": "Total Credits",
+   "precision": "2"
+  },
+  {
+   "fieldname": "credits_secured",
+   "fieldtype": "Float",
+   "label": "Credits Secured",
+   "precision": "2"
+  },
+  {
+   "fieldname": "sec_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "subjects",
+   "fieldtype": "Table",
+   "label": "Subjects",
+   "options": "Subject Result"
+  },
+  {
+   "fieldname": "attachments_section",
+   "fieldtype": "Section Break",
+   "label": "Attachments"
+  },
+  {
+   "fieldname": "result_pdf",
+   "fieldtype": "Attach",
+   "label": "Result PDF"
+  },
+  {
+   "fieldname": "api_url",
+   "fieldtype": "Data",
+   "label": "API Response URL"
+  }
+ ],
+ "links": [],
+ "modified": "2024-05-31 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "srkr_frappe_app_api",
+ "name": "Semester Result",
+ "naming_rule": "Expression",
+ "autoname_expression": "SR-.student.-.{semester}",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Student",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "student"
+}
