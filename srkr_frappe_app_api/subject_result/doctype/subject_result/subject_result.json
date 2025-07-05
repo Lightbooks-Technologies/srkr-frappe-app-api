@@ -61,11 +61,10 @@
  "is_child_table": 1,
  "links": [],
  "modified_by": "Administrator",
- "module": "srkr_frappe_app_api",
+ "module": "subject_result",
  "name": "Subject Result",
  "naming_rule": "Random",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
 }
-

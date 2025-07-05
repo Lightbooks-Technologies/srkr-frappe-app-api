@@ -108,7 +108,7 @@
  ],
  "links": [],
  "modified_by": "Administrator",
- "module": "srkr_frappe_app_api",
+ "module": "semester_result",
  "name": "Semester Result",
  "naming_rule": "Expression",
  "autoname_expression": "SR-.student.-.{semester}",
@@ -117,4 +117,3 @@
  "states": [],
  "title_field": "student"
 }
-
