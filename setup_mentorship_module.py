@@ -204,6 +204,26 @@ def create_all_student_mentorship_profiles():
         print(f"    ❌ Failed: {failed} profiles.")
     print("--- Phase 4 Complete ---")
 
+def import_doctypes_manually():
+    """
+    This function explicitly imports the DocTypes when `bench migrate` doesn't recognize them.
+    """
+    print("\n--- Manual DocType Import ---")
+    import_paths = [
+        "srkr_frappe_app_api/doctype/semester_result/semester_result.json",
+        "srkr_frappe_app_api/doctype/subject_result/subject_result.json"
+    ]
+    
+    for import_path in import_paths:
+        try:
+            from frappe.modules.import_file import import_file_by_path
+            import_file_by_path(import_path, force=True)
+            print(f"    ✅ Successfully imported: {import_path}")
+        except Exception as e:
+            print(f"    ❌ Failed to import {import_path}: {str(e)}")
+    
+    print("--- Manual Import Complete ---")
+
 def run_complete_mentorship_setup():
     """
     Executes the complete setup process for the Mentorship module.
@@ -214,6 +234,7 @@ def run_complete_mentorship_setup():
     create_mentorship_client_script()
     configure_mentorship_links()
     create_all_student_mentorship_profiles()
+    import_doctypes_manually()  # Add manual import as a final step
     frappe.db.commit()
     print("\n\n✅✅✅ MENTORSHIP MODULE SETUP COMPLETE! ✅✅✅")
     print("\nIMPORTANT: Please exit the console and run 'bench migrate' to complete the setup.")

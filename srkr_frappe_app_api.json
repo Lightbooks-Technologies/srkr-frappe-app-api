@@ -14,13 +14,6 @@
      "icon": "octicon octicon-file-directory",
      "type": "module",
      "label": "SRKR Frappe App API"
-   },
-   {
-     "module_name": "Education",
-     "color": "#5DA3FA",
-     "icon": "octicon octicon-mortar-board",
-     "type": "module",
-     "label": "Education"
    }
  ]
 }
