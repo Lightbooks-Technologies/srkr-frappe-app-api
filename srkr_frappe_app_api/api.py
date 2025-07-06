@@ -3,7 +3,6 @@ from frappe.utils import get_datetime, get_time_str, get_datetime_str, getdate #
 import re 
 # import traceback # Not needed without debug prints
 from datetime import timedelta, datetime as dt
-import requests
 
 @frappe.whitelist(allow_guest=True)
 def hello_world():
@@ -267,84 +266,3 @@ def get_student_daily_class_attendance(student, start_date, end_date=None):
         detailed_attendance.append(entry)
 
     return detailed_attendance
-
-@frappe.whitelist()
-def sync_student_results(student_id):
-    """
-    Fetches exam results for a given student from the external API
-    and syncs them into the Semester Result DocType.
-    """
-    try:
-        student_doc = frappe.get_doc("Student", student_id)
-        reg_no = student_doc.custom_hall_ticket_number
-
-        if not reg_no:
-            frappe.throw(f"Hall Ticket Number (regNo) not found for student {student_doc.student_name}")
-
-        api_key = frappe.conf.get("srkr_api_key")
-        if not api_key:
-            frappe.throw("SRKR API Key is not set in site_config.json")
-
-        base_url = "https://api.srkrexams.in/api/Result/GetResultByRegNo"
-        params = {"regNo": reg_no, "sSEM": "ALL"}
-        headers = {"x-api-key": api_key}
-
-        response = requests.get(base_url, params=params, headers=headers, timeout=30)
-        response.raise_for_status()
-        api_data = response.json()
-
-        if not api_data.get("success") or not api_data.get("data"):
-            frappe.msgprint("API call successful, but no result data was returned.")
-            return {"status": "no_data"}
-
-        results = api_data["data"].get("results", [])
-        if not results:
-            frappe.msgprint("No semester results found for this student.")
-            return {"status": "no_data"}
-
-        synced_semesters = 0
-        for sem_result in results:
-            semester_name = sem_result.get("semester")
-            semester_doc_name = frappe.db.get_value("Semester", {"semester_no": semester_name})
-
-            if not semester_doc_name:
-                frappe.log_error(f"Semester '{semester_name}' not found in Frappe. Skipping.", "SRKR API Sync")
-                continue
-            
-            existing_result = frappe.db.exists("Semester Result", {"student": student_id, "semester": semester_doc_name})
-
-            doc = frappe.get_doc("Semester Result", existing_result) if existing_result else frappe.new_doc("Semester Result")
-            doc.student = student_id
-            doc.semester = semester_doc_name
-            doc.sgpa = sem_result.get("sgpa")
-            doc.cgpa = sem_result.get("cgpa")
-            doc.total_credits = sem_result.get("totalCredits")
-            doc.credits_secured = sem_result.get("creditsSecured")
-            doc.api_url = response.url
-
-            doc.set("subjects", [])
-            for subject in sem_result.get("subjects", []):
-                course_doc_name = frappe.db.get_value("Course", {"custom_course_code": subject.get("code")})
-                doc.append("subjects", {
-                    "course": course_doc_name,
-                    "subject_code": subject.get("code"),
-                    "subject_name": subject.get("name"),
-                    "credits": subject.get("credits"),
-                    "grade": subject.get("grade"),
-                    "result": subject.get("result"),
-                    "exam_session": subject.get("exammy"),
-                })
-            
-            doc.save(ignore_permissions=True)
-            synced_semesters += 1
-
-        frappe.db.commit()
-        frappe.msgprint(f"Successfully synced {synced_semesters} semester(s) of results for {student_doc.student_name}.")
-        return {"status": "success"}
-
-    except requests.exceptions.RequestException as e:
-        frappe.log_error(frappe.get_traceback(), "SRKR API Sync Error")
-        frappe.throw(f"API Connection Error: {e}", title="API Error")
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "SRKR API Sync Error")
-        frappe.throw(f"An unexpected error occurred: {e}", title="Sync Error")
