@@ -1,88 +1,31 @@
 {
  "actions": [],
  "autoname": "hash",
- "creation": "2024-07-05 12:00:00.000000",
- "custom": 0,
+ "creation": "2024-07-06 10:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "course",
-  "subject_code",
-  "subject_name",
-  "credits",
-  "grade",
-  "result",
-  "exam_session"
+  "course", "subject_code", "subject_name", "credits", "grade", "result", "exam_session"
  ],
  "fields": [
-  {
-   "fieldname": "course",
-   "fieldtype": "Link",
-   "label": "Course",
-   "options": "Course"
-  },
-  {
-   "fieldname": "subject_code",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Subject Code"
-  },
-  {
-   "fieldname": "subject_name",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Subject Name"
-  },
-  {
-   "fieldname": "credits",
-   "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Credits"
-  },
-  {
-   "fieldname": "grade",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Grade"
-  },
-  {
-   "fieldname": "result",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Result",
-   "options": "PASS\nFAIL"
-  },
-  {
-   "fieldname": "exam_session",
-   "fieldtype": "Data",
-   "label": "Exam Session",
-   "description": "Stores the 'exammy' value, e.g., APR-2022"
-  }
+  {"fieldname": "course", "fieldtype": "Link", "label": "Course", "options": "Course"},
+  {"fieldname": "subject_code", "fieldtype": "Data", "in_list_view": 1, "label": "Subject Code"},
+  {"fieldname": "subject_name", "fieldtype": "Data", "in_list_view": 1, "label": "Subject Name"},
+  {"fieldname": "credits", "fieldtype": "Float", "in_list_view": 1, "label": "Credits"},
+  {"fieldname": "grade", "fieldtype": "Data", "in_list_view": 1, "label": "Grade"},
+  {"fieldname": "result", "fieldtype": "Select", "in_list_view": 1, "label": "Result", "options": "PASS\nFAIL"},
+  {"fieldname": "exam_session", "fieldtype": "Data", "label": "Exam Session", "description": "e.g., APR-2022"}
  ],
  "is_child_table": 1,
  "links": [],
- "modified": "2024-07-05 12:00:00.000000",
+ "modified": "2024-07-06 10:00:00.000000",
  "modified_by": "Administrator",
- "module": "srkr_frappe_app_api",
+ "module": "Education",
  "name": "Subject Result",
  "naming_rule": "Random",
  "owner": "Administrator",
- "permissions": [
-  {
-   "create": 1,
-   "delete": 1,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "System Manager",
-   "share": 1,
-   "write": 1
-  }
- ],
- "sort_field": "modified",
- "sort_order": "DESC",
+ "permissions": [],
+ "sort_field": "modified", 
+ "sort_order": "DESC", 
  "states": []
 }
-
