@@ -30,33 +30,35 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
         frappe.throw("Start Date cannot be after End Date.")
     # --- (End of Date validation) ---
 
-    # --- CORE MODIFICATION: Use frappe.db.sql for complex filtering ---
-    # This query finds schedules where the provided 'instructor' is in any of the
-    # three instructor fields, within the specified date range.
+    # --- CORE MODIFICATION: Use frappe.db.sql with a JOIN ---
+    # We join with 'tabRoom' to fetch the room_name directly in one query.
+    # We use table aliases (CS for Course Schedule, R for Room) for clarity.
     q = """
         SELECT
-            `name`,
-            `schedule_date`,
-            `course`,
-            `from_time`,
-            `to_time`,
-            `room`,
-            `student_group`,
-            `color`,
-            `class_schedule_color`,
-            `instructor`,
-            `co_instructor_1`,
-            `co_instructor_2`
+            CS.`name`,
+            CS.`schedule_date`,
+            CS.`course`,
+            CS.`from_time`,
+            CS.`to_time`,
+            CS.`room`,
+            R.`room_name`, -- <<< CHANGE: Fetched the room_name
+            CS.`student_group`,
+            CS.`color`,
+            CS.`class_schedule_color`,
+            CS.`instructor`,
+            CS.`co_instructor_1`,
+            CS.`co_instructor_2`
         FROM
-            `tabCourse Schedule`
+            `tabCourse Schedule` AS CS
+        LEFT JOIN `tabRoom` AS R ON CS.room = R.name -- <<< CHANGE: Joined with the Room table
         WHERE
-            (`instructor` = %(instructor)s OR
-             `co_instructor_1` = %(instructor)s OR
-             `co_instructor_2` = %(instructor)s)
+            (CS.`instructor` = %(instructor)s OR
+             CS.`co_instructor_1` = %(instructor)s OR
+             CS.`co_instructor_2` = %(instructor)s)
             AND
-            `schedule_date` BETWEEN %(start_date)s AND %(end_date)s
+            CS.`schedule_date` BETWEEN %(start_date)s AND %(end_date)s
         ORDER BY
-            `schedule_date` asc, `from_time` asc
+            CS.`schedule_date` asc, CS.`from_time` asc
     """
     
     course_schedules = frappe.db.sql(q, values={
@@ -82,8 +84,6 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
         # --- Attendance Summary Handling (Unchanged) ---
         attendance_summary = {}
         if cs_record.name:
-            # NOTE: Your original code used "Student Attendance". If your DocType is "Attendance",
-            # update the name here. Based on the spec, it's likely "Attendance".
             student_attendance_for_cs = frappe.get_all(
                 "Student Attendance",
                 filters={
@@ -151,7 +151,7 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
         
         schedule_color = cs_record.get("color") or cs_record.get("class_schedule_color")
 
-        # --- MODIFICATION: Added instructor fields to the final output ---
+        # --- MODIFICATION: Updated the final output dictionary ---
         entry = {
             "course_schedule_id": cs_record.name,
             "date": cs_record.schedule_date.strftime('%Y-%m-%d'),
@@ -160,11 +160,11 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
             "calendar_id": calendar_id_val,
             "start_time": start_datetime_formatted,
             "end_time": end_datetime_formatted,
-            "room": cs_record.get("room"),
+            "room_id": cs_record.get("room"),         # <<< CHANGE: Renamed 'room' to 'room_id' for clarity
+            "room_name": cs_record.get("room_name"),  # <<< CHANGE: Added the new 'room_name' field
             "student_group": cs_record.get("student_group"),
             "color": schedule_color,
             "attendance_summary": attendance_summary,
-            # New fields added to be returned to the frontend
             "instructor": cs_record.instructor,
             "co_instructor_1": cs_record.co_instructor_1,
             "co_instructor_2": cs_record.co_instructor_2
@@ -172,7 +172,6 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
         detailed_schedule.append(entry)
 
     return detailed_schedule
-
 
 @frappe.whitelist()
 def get_instructor_info():
