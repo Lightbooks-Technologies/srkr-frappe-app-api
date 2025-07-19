@@ -1,0 +1,153 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:ESB-{student_id}-SEM{semester_number}",
+ "creation": "2024-12-20 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "student_section",
+  "student",
+  "student_id",
+  "student_name",
+  "column_break_1",
+  "semester_number",
+  "total_backlogs",
+  "subjects_section",
+  "backlog_subjects",
+  "sync_details_section",
+  "last_synced",
+  "synced_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "student_section",
+   "fieldtype": "Section Break",
+   "label": "Student Information"
+  },
+  {
+   "fieldname": "student",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Student",
+   "options": "Student",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "student_id",
+   "fieldtype": "Data",
+   "label": "Student ID (Hall Ticket)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "student_name",
+   "fieldtype": "Data",
+   "label": "Student Name",
+   "read_only": 1,
+   "fetch_from": "student.student_name"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "semester_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Semester",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_backlogs",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Total Backlogs",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subjects_section",
+   "fieldtype": "Section Break",
+   "label": "Backlog Subjects"
+  },
+  {
+   "fieldname": "backlog_subjects",
+   "fieldtype": "Table",
+   "label": "Backlog Subjects",
+   "options": "Exam Backlog Subject",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_details_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Details"
+  },
+  {
+   "fieldname": "last_synced",
+   "fieldtype": "Datetime",
+   "label": "Last Synced",
+   "read_only": 1
+  },
+  {
+   "fieldname": "synced_by",
+   "fieldtype": "Link",
+   "label": "Synced By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-12-20 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Examination",
+ "name": "Exam Semester Backlog",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 0
+  },
+  {
+   "create": 0,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Academic User",
+   "share": 1,
+   "write": 0
+  },
+  {
+   "create": 0,
+   "delete": 0,
+   "email": 1,
+   "export": 0,
+   "print": 1,
+   "read": 1,
+   "report": 0,
+   "role": "Student",
+   "share": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "student_name",
+ "track_changes": 1
+}
