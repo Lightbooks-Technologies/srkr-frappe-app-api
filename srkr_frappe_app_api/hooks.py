@@ -1,3 +1,7 @@
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
+from . import __version__ as app_version
+
 app_name = "srkr_frappe_app_api"
 app_title = "Srkr Frappe App Api"
 app_publisher = "LB"
@@ -43,7 +47,9 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+    "Student": "public/js/student_exam_results.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -117,9 +123,11 @@ app_license = "mit"
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
+permission_query_conditions = {
+    "Exam Semester Result": "srkr_frappe_app_api.examination.permissions.get_permission_query_conditions",
+    "Exam Semester Backlog": "srkr_frappe_app_api.examination.permissions.get_permission_query_conditions",
+    "Exam HM Semester Result": "srkr_frappe_app_api.examination.permissions.get_permission_query_conditions",
+}
 #
 # has_permission = {
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
@@ -129,9 +137,9 @@ app_license = "mit"
 # ---------------
 # Override standard doctype classes
 
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
+override_doctype_class = {
+    "Course Scheduling Tool": "srkr_frappe_app_api.overrides.CustomCourseSchedulingTool"
+}
 
 # Document Events
 # ---------------
@@ -148,13 +156,13 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
+scheduler_events = {
 # 	"all": [
 # 		"srkr_frappe_app_api.tasks.all"
 # 	],
-# 	"daily": [
-# 		"srkr_frappe_app_api.tasks.daily"
-# 	],
+	"daily": [
+		"srkr_frappe_app_api.examination.tasks.sync_all_active_students"
+	],
 # 	"hourly": [
 # 		"srkr_frappe_app_api.tasks.hourly"
 # 	],
@@ -164,7 +172,7 @@ app_license = "mit"
 # 	"monthly": [
 # 		"srkr_frappe_app_api.tasks.monthly"
 # 	],
-# }
+}
 
 # Testing
 # -------
@@ -241,7 +249,3 @@ app_license = "mit"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
-override_doctype_class = {
-    "Course Scheduling Tool": "srkr_frappe_app_api.overrides.CustomCourseSchedulingTool"
-}
