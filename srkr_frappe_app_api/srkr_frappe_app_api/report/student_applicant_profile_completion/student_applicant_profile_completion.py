@@ -3,9 +3,18 @@ from frappe import _
 
 # The full list of fields to include in the report
 FIELDS_TO_CHECK = [
+    # Original fields showing value
     "custom_name_as_per_ssc",
     "custom_hall_ticket_number",
     "student_mobile_number",
+    # NEW fields to show value
+    "custom_cet_type",
+    "custom_admission_quota",
+    "custom_admission_type",
+    "program",
+    "custom_rank",
+    "custom_scholarship_eligible",
+    # Fields showing status
     "custom_allotment_letter",
     "custom_10th_certificate",
     "custom_12th_certificate",
@@ -23,11 +32,19 @@ FIELDS_TO_CHECK = [
     "custom_ward_sachivalayam_centre_code_no"
 ]
 
-# NEW: List of fields for which we want to display the actual value
+# List of fields for which we want to display the actual value
 FIELDS_TO_SHOW_VALUE = [
+    # Original fields
     "custom_name_as_per_ssc",
     "custom_hall_ticket_number",
     "student_mobile_number",
+    # NEW FIELDS ADDED HERE
+    "custom_cet_type",
+    "custom_admission_quota",
+    "custom_admission_type",
+    "program",
+    "custom_rank",
+    "custom_scholarship_eligible",
 ]
 
 def execute(filters=None):
@@ -78,14 +95,12 @@ def get_data(filters):
         for fieldname in FIELDS_TO_CHECK:
             value = doc.get(fieldname)
             
-            # Check if this field is one where we should show the actual value
             if fieldname in FIELDS_TO_SHOW_VALUE:
                 if value:
-                    row[fieldname] = value  # Show the actual value
+                    row[fieldname] = value
                 else:
-                    row[fieldname] = "Not Filled" # Fallback if empty
+                    row[fieldname] = "Not Filled"
             else:
-                # For all other fields, use the "Filled" / "Not Filled" status
                 if value:
                     row[fieldname] = "Filled"
                 else:
