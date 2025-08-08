@@ -1,7 +1,7 @@
 # srkr_frappe_app_api/srkr_frappe_app_api/instructor/schedule_api.py
 
 import frappe
-from frappe.utils import getdate, get_time # Import get_time if it was missed previously
+from frappe.utils import getdate, get_time 
 import re 
 from datetime import timedelta, datetime as dt
 import json
@@ -348,16 +348,10 @@ def get_instructor_info():
 
 @frappe.whitelist()
 def mark_attendances(
-    students_present, students_absent, course_schedule=None, student_group=None, date=None
+    students_present, students_absent, course_schedule=None, student_group=None, date=None, taught_topics=None
 ):
     """
-    Creates Multiple Attendance Records for multiple course schedules.
-
-    :param students_present: Students Present JSON.
-    :param students_absent: Students Absent JSON.
-    :param course_schedule: List of Course Schedules (JSON array or comma-separated).
-    :param student_group: Student Group.
-    :param date: Date.
+    Creates Multiple Attendance Records and saves the topics taught for each course schedule.
     """
     if student_group:
         academic_year = frappe.db.get_value("Student Group", student_group, "academic_year")
@@ -373,35 +367,59 @@ def mark_attendances(
     present = json.loads(students_present)
     absent = json.loads(students_absent)
 
-    # Parse course_schedule as a list
+    topics_object_list = []
+    if taught_topics:
+        try:
+            topics_object_list = json.loads(taught_topics)
+            if not isinstance(topics_object_list, list):
+                topics_object_list = []
+        except Exception:
+            topics_object_list = []
+
+    course_schedules = []
     if course_schedule:
         if isinstance(course_schedule, str):
             try:
                 course_schedules = json.loads(course_schedule)
-                if not isinstance(course_schedules, list):
-                    course_schedules = [course_schedules]
             except Exception:
-                # Fallback: comma-separated string
                 course_schedules = [s.strip() for s in course_schedule.split(",") if s.strip()]
-        elif isinstance(course_schedule, list):
-            course_schedules = course_schedule
         else:
-            course_schedules = [course_schedule]
-    else:
-        course_schedules = [None]
+             course_schedules = course_schedule
 
-    for cs in course_schedules:
+    if not isinstance(course_schedules, list):
+        course_schedules = [course_schedules]
+
+    for cs_id in course_schedules:
         for d in present:
-            make_attendance_records(
-                d["student"], d["student_name"], "Present", cs, student_group, date
-            )
+            make_attendance_records(d["student"], d["student_name"], "Present", cs_id, student_group, date)
         for d in absent:
-            make_attendance_records(
-                d["student"], d["student_name"], "Absent", cs, student_group, date
-            )
+            make_attendance_records(d["student"], d["student_name"], "Absent", cs_id, student_group, date)
+
+        if cs_id and topics_object_list:
+            try:
+                schedule_doc = frappe.get_doc("Course Schedule", cs_id)
+                
+                # ***** THE FIX IS HERE *****
+                # The field name MUST match what is in the DocType. If added via Customize Form,
+                # it is prefixed with 'custom_'. Your getdoc response confirmed this.
+                child_table_fieldname = "custom_taught_topics" 
+
+                schedule_doc.set(child_table_fieldname, [])
+                for topic_obj in topics_object_list:
+                    if not topic_obj.get("topic"):
+                        continue
+                    schedule_doc.append(child_table_fieldname, {
+                        "topic": topic_obj.get("topic"),
+                        "completed": 1 if topic_obj.get("completed") else 0
+                    })
+                schedule_doc.save(ignore_permissions=True)
+            except frappe.DoesNotExistError:
+                frappe.log_error(f"Course Schedule {cs_id} not found when saving topics.", "Mark Attendance API")
+            except Exception as e:
+                frappe.log_error(frappe.get_traceback(), f"Error saving taught topics for {cs_id}")
 
     frappe.db.commit()
-    frappe.msgprint(_("Attendance has been marked successfully."))
+    frappe.msgprint(_("Attendance and Taught Topics have been saved successfully."))
 
 def make_attendance_records(
 	student, student_name, status, course_schedule=None, student_group=None, date=None
