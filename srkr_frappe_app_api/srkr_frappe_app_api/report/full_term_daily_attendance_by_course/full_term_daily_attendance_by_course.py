@@ -67,7 +67,7 @@ def get_data(filters, columns):
     students = frappe.get_all("Student Group Student",
         filters={"parent": filters.get("student_group"), "active": 1},
         fields=["student", "student_name", "student.custom_student_id"],
-        order_by="student.custom_student_id"
+        order_by="`tabStudent`.custom_student_id"
     )
 
     if not students:
