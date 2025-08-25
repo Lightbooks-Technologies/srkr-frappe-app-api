@@ -27,9 +27,9 @@ def get_columns(filters):
             student_group = %(student_group)s
             AND course_schedule IN (
                 SELECT name FROM `tabCourse Schedule`
-                WHERE course = %(course)s -- REMOVED docstatus CHECK
+                WHERE course = %(course)s
             )
-            AND docstatus = 1 -- This is for submitted Student Attendance records
+            AND docstatus = 1
         ORDER BY date ASC
     """, filters, as_list=1)
 
@@ -56,6 +56,7 @@ def get_columns(filters):
     columns.extend([
         {"fieldname": "total_present", "label": _("Total Present"), "fieldtype": "Int", "width": 120},
         {"fieldname": "total_classes", "label": _("Total Classes"), "fieldtype": "Int", "width": 120},
+        {"fieldname": "attendance_percentage", "label": _("Attendance %"), "fieldtype": "Percent", "width": 120},
     ])
 
     return columns
@@ -64,17 +65,34 @@ def get_data(filters, columns):
     """
     Fetch and pivot the attendance data to match the dynamic columns.
     """
+    # Get students from Student Group Student - REMOVE the problematic order_by
     students = frappe.get_all("Student Group Student",
         filters={"parent": filters.get("student_group"), "active": 1},
-        fields=["student", "student_name", "student.custom_student_id"],
-        order_by="`tabStudent`.custom_student_id"
+        fields=["student", "student_name"]
     )
 
     if not students:
         return []
 
+    # Get student IDs for further queries
     student_ids = [s.student for s in students]
+    
+    # Get student details including custom_student_id from Student doctype
+    student_details = frappe.get_all("Student",
+        filters={"name": ("in", student_ids)},
+        fields=["name", "student_name", "custom_student_id"],
+        order_by="custom_student_id ASC"  # Order by custom_student_id here instead
+    )
+    
+    # Create a mapping of student details
+    student_map = {}
+    for student in student_details:
+        student_map[student.name] = {
+            "student_name": student.student_name,
+            "custom_student_id": student.custom_student_id or ""
+        }
 
+    # Get attendance records
     attendance_records = frappe.db.sql("""
         SELECT student, date, status
         FROM `tabStudent Attendance`
@@ -83,11 +101,12 @@ def get_data(filters, columns):
             AND student_group = %(student_group)s
             AND course_schedule IN (
                 SELECT name FROM `tabCourse Schedule`
-                WHERE course = %(course)s -- REMOVED docstatus CHECK
+                WHERE course = %(course)s
             )
-            AND docstatus = 1 -- This is for submitted Student Attendance records
+            AND docstatus = 1
     """, {"student_ids": student_ids, **filters}, as_dict=1)
 
+    # Create pivoted attendance data
     pivoted_attendance = {}
     for record in attendance_records:
         date_key = record.date.strftime("%Y_%m_%d")
@@ -97,17 +116,21 @@ def get_data(filters, columns):
             pivoted_attendance[record.student] = {}
         pivoted_attendance[record.student][date_key] = status_char
 
+    # Build final data using the ordered student_details
     final_data = []
-    for student in students:
+    for student in student_details:  # This is already ordered by custom_student_id
+        student_info = student_map.get(student.name, {})
         row = {
-            "student_name": student.student_name,
-            "student_id": student.custom_student_id,
+            "student_name": student_info.get("student_name", ""),
+            "student_id": student_info.get("custom_student_id", ""),
         }
+        
         total_present = 0
         total_classes = 0
-
-        student_attendance_data = pivoted_attendance.get(student.student, {})
-
+        
+        student_attendance_data = pivoted_attendance.get(student.name, {})
+        
+        # Process each date column
         for col in columns:
             if col["fieldname"].startswith("date_"):
                 date_key = col["fieldname"].replace("date_", "")
@@ -118,9 +141,10 @@ def get_data(filters, columns):
                     total_classes += 1
                     if status == 'P':
                         total_present += 1
-
+        
         row["total_present"] = total_present
         row["total_classes"] = total_classes
+        row["attendance_percentage"] = (total_present / total_classes * 100) if total_classes > 0 else 0
         
         final_data.append(row)
 
