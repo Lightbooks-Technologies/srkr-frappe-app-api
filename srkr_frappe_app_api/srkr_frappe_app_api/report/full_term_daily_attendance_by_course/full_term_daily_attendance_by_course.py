@@ -39,7 +39,7 @@ def get_columns(filters):
 
     columns = [
         {"fieldname": "student_name", "label": _("Student Name"), "fieldtype": "Data", "width": 200},
-        {"fieldname": "roll_number", "label": _("Roll No"), "fieldtype": "Data", "width": 100},
+        {"fieldname": "student_id", "label": _("Student Id"), "fieldtype": "Data", "width": 100},
     ]
 
     for date_tuple in class_dates:
@@ -66,8 +66,8 @@ def get_data(filters, columns):
     """
     students = frappe.get_all("Student Group Student",
         filters={"parent": filters.get("student_group"), "active": 1},
-        fields=["student", "student_name", "group_roll_number"],
-        order_by="group_roll_number"
+        fields=["student", "student_name", "student.custom_student_id"],
+        order_by="student.custom_student_id"
     )
 
     if not students:
@@ -101,7 +101,7 @@ def get_data(filters, columns):
     for student in students:
         row = {
             "student_name": student.student_name,
-            "roll_number": student.group_roll_number,
+            "student_id": student.custom_student_id,
         }
         total_present = 0
         total_classes = 0
