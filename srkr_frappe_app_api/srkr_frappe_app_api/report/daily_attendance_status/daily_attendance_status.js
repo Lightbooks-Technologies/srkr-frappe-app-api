@@ -7,7 +7,7 @@ frappe.query_reports["Daily Attendance Status"] = {
             "fieldname": "date",
             "label": __("Date"),
             "fieldtype": "Date",
-            "reqd": 1,
+            // "reqd": 1, // We've commented this out to allow Auto Email setup
             "default": frappe.datetime.get_today()
         },
         {
