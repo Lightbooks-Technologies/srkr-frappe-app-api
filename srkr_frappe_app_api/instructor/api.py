@@ -7,6 +7,12 @@ from datetime import timedelta, datetime as dt
 import json
 from frappe import _
 
+# --- START: New imports added for SMS functionality ---
+import requests
+from urllib.parse import urlencode # Added for creating a debuggable URL
+# --- END: New imports ---
+
+
 @frappe.whitelist(allow_guest=True)
 def get_instructor_schedule(instructor, start_date, end_date=None):
     if not instructor or not start_date:
@@ -162,8 +168,8 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
             "calendar_id": calendar_id_val,
             "start_time": start_datetime_formatted,
             "end_time": end_datetime_formatted,
-            "room_id": cs_record.get("room"),         # <<< CHANGE: Renamed 'room' to 'room_id' for clarity
-            "room_name": cs_record.get("room_name"),  # <<< CHANGE: Added the new 'room_name' field
+            "room_id": cs_record.get("room"),
+            "room_name": cs_record.get("room_name"),
             "student_group": cs_record.get("student_group"),
             "color": schedule_color,
             "attendance_summary": attendance_summary,
@@ -399,9 +405,6 @@ def mark_attendances(
             try:
                 schedule_doc = frappe.get_doc("Course Schedule", cs_id)
                 
-                # ***** THE FIX IS HERE *****
-                # The field name MUST match what is in the DocType. If added via Customize Form,
-                # it is prefixed with 'custom_'. Your getdoc response confirmed this.
                 child_table_fieldname = "custom_taught_topics" 
 
                 schedule_doc.set(child_table_fieldname, [])
@@ -421,6 +424,81 @@ def mark_attendances(
     frappe.db.commit()
     frappe.msgprint(_("Attendance and Taught Topics have been saved successfully."))
 
+
+# --- START: New helper function added for sending absentee SMS ---
+def send_absentee_sms(student_id, student_name, course_schedule_id, attendance_date):
+    """
+    Fetches guardian mobile number and sends a pre-formatted SMS for an absent student.
+    """
+    print(f"\n--- DEBUG: Inside send_absentee_sms for student: {student_name} ({student_id}) ---")
+
+    # --- Configuration ---
+    API_URL = "https://smslogin.co/v3/api.php"
+    API_KEY = "441580e5effd27db3eaa"
+    USERNAME = "srkrec"
+    SENDER_ID = "SRKREC"
+    TEMPLATE_ID = "1707163646397399883"
+
+    try:
+        # --- MODIFIED LOGIC: Get Father's mobile number directly from Student DocType ---
+        print(f"DEBUG: Attempting to find mobile number for student {student_id} using field 'custom_father_mobile_number'.")
+        # mobile_no = frappe.db.get_value("Student", student_id, "custom_father_mobile_number")
+        mobile_no = "917995666609"
+        
+        if not mobile_no:
+            print(f"!!! DEBUG WARNING: Field 'custom_father_mobile_number' is empty for student {student_id}. SMS will not be sent.")
+            return
+        
+        print(f"DEBUG: Found mobile_no: {mobile_no}")
+
+        # --- START: MODIFIED MESSAGE CONSTRUCTION TO MATCH DLT TEMPLATE ---
+
+        # 1. First variable {#var#}: Student ID, in parentheses
+        # The 'student_id' parameter is passed to this function, e.g., "EDU-STU-2025-01382"
+        ward_variable = f"({student_id})"
+
+        # 2. Second variable {#var#}: Date in DD-MM-YYYY format
+        date_variable = getdate(attendance_date).strftime('%d-%m-%Y')
+
+        # 3. Third variable {#var#}: (Attd/Con) - Assuming 0/1 for this single absence
+        attd_con_variable = "(0/1)"
+        
+        # 4. Construct the message EXACTLY as per the template. Pay attention to spaces.
+        message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
+        
+        # --- END: MODIFIED MESSAGE CONSTRUCTION ---
+
+        print(f"DEBUG: Constructed DLT-compliant message: '{message_text}'")
+
+        # Prepare and Send the Request
+        params = {
+            "username": USERNAME,
+            "apikey": API_KEY,
+            "senderid": SENDER_ID,
+            "mobile": mobile_no,
+            "message": message_text,
+            "templateid": TEMPLATE_ID
+        }
+        
+        debug_url = f"{API_URL}?{urlencode(params)}"
+        print(f"DEBUG: Preparing to send request to URL: {debug_url}")
+
+        response = requests.get(API_URL, params=params, timeout=10)
+        print(f"DEBUG: SMS API Response Status Code: {response.status_code}")
+        print(f"DEBUG: SMS API Response Body: {response.text}")
+        response.raise_for_status()
+        
+        print(f"--- DEBUG: Successfully processed SMS for {student_name} ---")
+
+    except Exception as e:
+        print(f"!!! DEBUG ERROR: An exception occurred in send_absentee_sms for student {student_id}: {e}")
+        frappe.log_error(
+            message=frappe.get_traceback(),
+            title=f"Failed to send absentee SMS for student {student_id}"
+        )
+# --- END: New helper function ---
+
+
 def make_attendance_records(
 	student, student_name, status, course_schedule=None, student_group=None, date=None
 ):
@@ -431,6 +509,8 @@ def make_attendance_records(
 	:param course_schedule: Course Schedule.
 	:param status: Status (Present/Absent/Leave).
 	"""
+	print(f"--- make_attendance_records called for student: '{student_name}', status: '{status}' ---")
+
 	student_attendance = frappe.get_doc(
 		{
 			"doctype": "Student Attendance",
@@ -450,3 +530,16 @@ def make_attendance_records(
 	student_attendance.status = status
 	student_attendance.save()
 	student_attendance.submit()
+
+	# --- START: New code added to trigger SMS on absence ---
+	if status == "Absent":
+		print(f"DEBUG: Status is 'Absent' for {student_name}. Attempting to trigger SMS.")
+		try:
+			send_absentee_sms(student, student_name, course_schedule, date)
+		except Exception as e:
+			print(f"!!! DEBUG ERROR: A critical error occurred while trying to call send_absentee_sms for {student_name}: {e}")
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=f"Critical error while triggering absentee SMS for student {student}"
+			)
+	# --- END: New code added ---
