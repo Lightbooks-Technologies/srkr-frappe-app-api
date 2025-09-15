@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2024-07-18 10:05:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "student",
+  "assessment_item",
+  "marks_obtained"
+ ],
+ "fields": [
+  {
+   "fieldname": "student",
+   "fieldtype": "Link",
+   "label": "Student",
+   "options": "Student",
+   "reqd": 1
+  },
+  {
+   "fieldname": "assessment_item",
+   "fieldtype": "Link",
+   "label": "Assessment Item",
+   "options": "Assessment Structure",
+   "reqd": 1
+  },
+  {
+   "fieldname": "marks_obtained",
+   "fieldtype": "Float",
+   "label": "Marks Obtained"
+  }
+ ],
+ "hidden": 1,
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-07-18 10:05:00.000000",
+ "modified_by": "Administrator",
+ "module": "Internal Assessments",
+ "name": "Student Marks Data",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

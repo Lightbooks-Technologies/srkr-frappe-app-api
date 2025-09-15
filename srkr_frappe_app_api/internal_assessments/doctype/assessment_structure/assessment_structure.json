@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2024-07-18 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "midterm",
+  "assessment_type",
+  "question_id",
+  "co_number",
+  "max_marks",
+  "descriptive_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "midterm",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Midterm",
+   "options": "Mid-1\nMid-2",
+   "reqd": 1
+  },
+  {
+   "fieldname": "assessment_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Assessment Type",
+   "options": "Objective\nSubjective\nAssignment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "question_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Question ID",
+   "description": "Unique ID, e.g., M1-Obj-Q1",
+   "reqd": 1
+  },
+  {
+   "fieldname": "co_number",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "CO Number",
+   "options": "Course Outcome",
+   "reqd": 1
+  },
+  {
+   "fieldname": "max_marks",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Max Marks",
+   "reqd": 1
+  },
+  {
+   "fieldname": "descriptive_name",
+   "fieldtype": "Data",
+   "label": "Descriptive Name",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-07-18 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Internal Assessments",
+ "name": "Assessment Structure",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "descriptive_name"
+}
