@@ -1,11 +1,13 @@
-# srkr_frappe_app_api/srkr_frappe_app_api/instructor/schedule_api.py
+# srkr_frappe_app_api/srkr_frappe_app_api/instructor/api.py
 
 import frappe
-from frappe.utils import getdate, get_time 
+from frappe.utils import getdate, get_time, today # <-- Added 'today'
 import re 
 from datetime import timedelta, datetime as dt
 import json
 from frappe import _
+import requests  # <-- Added
+from urllib.parse import urlencode # <-- Added
 
 @frappe.whitelist(allow_guest=True)
 def get_instructor_schedule(instructor, start_date, end_date=None):
@@ -450,3 +452,126 @@ def make_attendance_records(
 	student_attendance.status = status
 	student_attendance.save()
 	student_attendance.submit()
+
+# ------------------------------------------------------------------
+# --- START: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
+# ------------------------------------------------------------------
+
+def send_summary_sms_helper(mobile_no, message_text):
+    """Helper function to call the SMS API and return the campaign ID."""
+    API_URL = "https://smslogin.co/v3/api.php"
+    API_KEY = "441580e5effd27db3eaa"
+    USERNAME = "srkrec"
+    SENDER_ID = "SRKREC"
+    TEMPLATE_ID = "1707163646397399883"
+    
+    params = {
+        "username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID,
+        "mobile": mobile_no, "message": message_text, "templateid": TEMPLATE_ID
+    }
+    
+    try:
+        response = requests.get(API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        # The response is not standard JSON, so we parse it manually
+        response_text = response.text
+        if 'campid' in response_text:
+            # A simple way to extract the campid from a string like "{'campid':'some_id'}"
+            campid = response_text.split("'")[3] 
+        else:
+            campid = response_text # Store the whole response if campid is not found
+            
+        print(f"SMS API Success for {mobile_no}. Response: {response.text}")
+        return campid
+    except Exception as e:
+        print(f"SMS API Failed for {mobile_no}. Error: {e}")
+        frappe.log_error(message=frappe.get_traceback(), title=f"SMS API Call Failed for {mobile_no}")
+        return None
+
+@frappe.whitelist()
+def send_daily_attendance_summary():
+    """
+    Scheduled function to send a single consolidated SMS to parents of absent students.
+    """
+    processing_date = today()
+    print(f"--- Running Daily Attendance Summary for {processing_date} ---")
+
+    # 1. Get a list of students for whom a summary has ALREADY been sent today.
+    already_processed_students = frappe.get_all(
+        "Sent SMS Summary Log",
+        filters={"date": processing_date},
+        pluck="student"
+    )
+    print(f"Students already processed today: {already_processed_students}")
+
+    # 2. Get a unique list of students who were marked absent today.
+    absent_students = frappe.get_all(
+        "Student Attendance",
+        filters={"date": processing_date, "status": "Absent"},
+        fields=["DISTINCT student"],
+        pluck="student"
+    )
+    print(f"Found {len(absent_students)} absent students today: {absent_students}")
+
+    # 3. Loop through each absent student who has not yet been processed.
+    for student_id in absent_students:
+        if student_id in already_processed_students:
+            print(f"Skipping {student_id}, summary already sent.")
+            continue
+
+        try:
+            print(f"\n--- Processing Student: {student_id} ---")
+            
+            mobile_no = frappe.get_value("Student", student_id, "custom_father_mobile_number")
+            # mobile_no = "917995666609"
+            
+            if not mobile_no:
+                print(f"Warning: No mobile number for student {student_id}. Skipping.")
+                continue
+
+            # --- FINAL FIX: Get the correct Student Group from an attendance record for today ---
+            student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
+            
+            # 4. Calculate Summary: Absences (Attd)
+            absent_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Absent"})
+            
+            # 5. Calculate Summary: Total Classes (Con)
+            total_classes = 0
+            if student_group:
+                total_classes = frappe.db.count("Course Schedule", {"student_group": student_group, "schedule_date": processing_date})
+            else:
+                print(f"Warning: Could not determine a Student Group for {student_id} from today's attendance. Total classes will be 0.")
+            
+            print(f"Summary for {student_id}: Absences={absent_count}, Total Classes={total_classes}")
+
+            # 6. Construct the DLT-compliant message
+            ward_variable = f"({student_id})"
+            date_variable = getdate(processing_date).strftime('%d-%m-%Y')
+            attd_con_variable = f"({absent_count}/{total_classes})"
+            message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
+            
+            print(f"Constructed Message: {message_text}")
+            
+            # 7. Send the SMS
+            message_id = send_summary_sms_helper(mobile_no, message_text)
+            
+            # 8. Log the successful send to prevent duplicates
+            if message_id:
+                log_doc = frappe.new_doc("Sent SMS Summary Log")
+                log_doc.student = student_id
+                log_doc.date = processing_date
+                log_doc.message_id = message_id
+                log_doc.insert(ignore_permissions=True)
+                frappe.db.commit()
+                print(f"Successfully sent summary and logged for {student_id}.")
+
+        except Exception as e:
+            print(f"!!! AN ERROR OCCURRED for student {student_id}: {e}")
+            frappe.log_error(frappe.get_traceback(), f"Failed to process summary for student {student_id}")
+            frappe.db.rollback()
+
+    print("--- Daily Attendance Summary run complete. ---")
+
+# ------------------------------------------------------------------
+# --- END: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
+# ------------------------------------------------------------------
