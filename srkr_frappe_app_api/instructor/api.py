@@ -504,7 +504,7 @@ def send_daily_attendance_summary():
     )
     print(f"Students already processed today: {already_processed_students}")
 
-    # 2. Get a unique list of students who were marked absent today.
+    # 2. Get a unique list of students who were marked absent at least once today.
     absent_students = frappe.get_all(
         "Student Attendance",
         filters={"date": processing_date, "status": "Absent"},
@@ -523,17 +523,16 @@ def send_daily_attendance_summary():
             print(f"\n--- Processing Student: {student_id} ---")
             
             mobile_no = frappe.get_value("Student", student_id, "custom_father_mobile_number")
-            # mobile_no = "917995666609"
             
             if not mobile_no:
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
                 continue
 
-            # --- FINAL FIX: Get the correct Student Group from an attendance record for today ---
+            # Get the correct Student Group from an attendance record for today
             student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
             
-            # 4. Calculate Summary: Absences (Attd)
-            absent_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Absent"})
+            # --- FINAL FIX: Calculate Attended Classes (Attd) instead of Absent ---
+            attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
             
             # 5. Calculate Summary: Total Classes (Con)
             total_classes = 0
@@ -542,12 +541,12 @@ def send_daily_attendance_summary():
             else:
                 print(f"Warning: Could not determine a Student Group for {student_id} from today's attendance. Total classes will be 0.")
             
-            print(f"Summary for {student_id}: Absences={absent_count}, Total Classes={total_classes}")
+            print(f"Summary for {student_id}: Attended={attended_count}, Total Classes={total_classes}")
 
             # 6. Construct the DLT-compliant message
             ward_variable = f"({student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
-            attd_con_variable = f"({absent_count}/{total_classes})"
+            attd_con_variable = f"({attended_count}/{total_classes})" # Using the corrected attended_count
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
             
             print(f"Constructed Message: {message_text}")
@@ -571,7 +570,7 @@ def send_daily_attendance_summary():
             frappe.db.rollback()
 
     print("--- Daily Attendance Summary run complete. ---")
-
+    
 # ------------------------------------------------------------------
 # --- END: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
 # ------------------------------------------------------------------
