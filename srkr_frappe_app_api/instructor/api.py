@@ -473,13 +473,11 @@ def send_summary_sms_helper(mobile_no, message_text):
     try:
         response = requests.get(API_URL, params=params, timeout=10)
         response.raise_for_status()
-        # The response is not standard JSON, so we parse it manually
         response_text = response.text
         if 'campid' in response_text:
-            # A simple way to extract the campid from a string like "{'campid':'some_id'}"
             campid = response_text.split("'")[3] 
         else:
-            campid = response_text # Store the whole response if campid is not found
+            campid = response_text
             
         print(f"SMS API Success for {mobile_no}. Response: {response.text}")
         return campid
@@ -488,6 +486,7 @@ def send_summary_sms_helper(mobile_no, message_text):
         frappe.log_error(message=frappe.get_traceback(), title=f"SMS API Call Failed for {mobile_no}")
         return None
 
+# --- THIS IS THE FINAL CORRECTED FUNCTION ---
 @frappe.whitelist()
 def send_daily_attendance_summary():
     """
@@ -527,32 +526,27 @@ def send_daily_attendance_summary():
             if not mobile_no:
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
                 continue
-
-            # Get the correct Student Group from an attendance record for today
-            student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
             
-            # --- FINAL FIX: Calculate Attended Classes (Attd) instead of Absent ---
+            # 4. Calculate Summary: Attended Classes (Attd)
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
             
-            # 5. Calculate Summary: Total Classes (Con)
-            total_classes = 0
-            if student_group:
-                total_classes = frappe.db.count("Course Schedule", {"student_group": student_group, "schedule_date": processing_date})
-            else:
-                print(f"Warning: Could not determine a Student Group for {student_id} from today's attendance. Total classes will be 0.")
+            # --- FINAL FIX: Calculate Total Classes based on submitted attendance records only ---
+            total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
             
-            print(f"Summary for {student_id}: Attended={attended_count}, Total Classes={total_classes}")
+            print(f"Summary for {student_id}: Attended={attended_count}, Total Classes (recorded)={total_classes}")
 
             # 6. Construct the DLT-compliant message
             ward_variable = f"({student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
-            attd_con_variable = f"({attended_count}/{total_classes})" # Using the corrected attended_count
+            attd_con_variable = f"({attended_count}/{total_classes})"
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
             
             print(f"Constructed Message: {message_text}")
             
             # 7. Send the SMS
-            message_id = send_summary_sms_helper(mobile_no, message_text)
+            # message_id = send_summary_sms_helper(mobile_no, message_text)
+
+            message_id = "SMS_DISABLED_FOR_TESTING"
             
             # 8. Log the successful send to prevent duplicates
             if message_id:
@@ -570,7 +564,7 @@ def send_daily_attendance_summary():
             frappe.db.rollback()
 
     print("--- Daily Attendance Summary run complete. ---")
-    
+
 # ------------------------------------------------------------------
 # --- END: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
 # ------------------------------------------------------------------
