@@ -105,35 +105,70 @@ def generate_marksheet_template(docname):
 
 @frappe.whitelist()
 def upload_marksheet(file_url, docname):
-    # ... (this function is correct and unchanged) ...
     doc = frappe.get_doc("Semester Midterm Assessment", docname)
-    file_path = os.path.join(frappe.get_site_path(), file_url.lstrip('/'))
-    try:
-        with open(file_path, "rb") as f:
-            content_bytes = f.read()
-    except FileNotFoundError:
-        frappe.throw(f"Uploaded file not found on the server at path: {file_path}")
+
+    # --- S3-COMPATIBLE FILE READING LOGIC ---
+
+    # Step 1: Find the File document using the URL provided by the uploader.
+    file_doc = frappe.get_doc("File", {"file_url": file_url})
+    if not file_doc:
+        frappe.throw(f"Could not find the uploaded file record for URL: {file_url}")
+
+    # Step 2: Get the raw content. The .get_content() method is S3-aware.
+    content = file_doc.get_content() # This will return either a string or bytes
+
+    # Step 3: Ensure we have bytes for the openpyxl library.
+    if isinstance(content, str):
+        # If Frappe gave us a decoded string, encode it back to raw bytes.
+        content_bytes = content.encode('utf-8')
+    else:
+        # If Frappe already gave us bytes, use them directly.
+        content_bytes = content
+
+    # Step 4: Load the workbook from the in-memory bytes.
     workbook = openpyxl.load_workbook(filename=BytesIO(content_bytes), data_only=True)
+    # --- END OF S3-COMPATIBLE LOGIC ---
+    
     sheet = workbook.active
     header = [cell.value for cell in sheet[1]]
+    
+    # Create maps for faster lookups during processing.
     student_map = {row.customer_student_id: row.student for row in doc.final_scores_summary}
     structure_map = {f"{row.midterm}-{row.assessment_type}-{row.question_id}": row.name for row in doc.assessment_structure}
+    
+    # Clear any old data before importing the new marks.
     doc.student_marks_data = []
+    
+    # Loop through the Excel rows, starting from the second row (to skip the header).
     for row_index in range(2, sheet.max_row + 1):
         register_number = sheet.cell(row=row_index, column=1).value
-        if not register_number: continue
+        if not register_number: 
+            continue # Skip empty rows
+
         student_docname = student_map.get(str(register_number).strip())
-        if not student_docname: continue
+        if not student_docname: 
+            # This student is in the Excel file but not in the official roster. Skip them.
+            continue
+
+        # Loop through the question columns in the Excel file.
         for col_index in range(3, len(header) + 1):
             descriptive_header_from_excel = header[col_index - 1]
             marks = sheet.cell(row=row_index, column=col_index).value
+            
+            # Look up the internal name of the assessment item using the descriptive header.
             assessment_item_docname = structure_map.get(descriptive_header_from_excel)
+            
             if assessment_item_docname:
+                # Add a new row to the hidden "Student Marks Data" table.
                 doc.append("student_marks_data", {
                     "student": student_docname,
                     "assessment_item": assessment_item_docname,
                     "marks_obtained": marks if marks is not None else 0
                 })
+    
+    # Save the document. This will trigger the `before_save` hook, which runs the
+    # `recalculate_scores` function to update the final summary table.
     doc.save(ignore_permissions=True)
     frappe.db.commit()
+    
     return doc
