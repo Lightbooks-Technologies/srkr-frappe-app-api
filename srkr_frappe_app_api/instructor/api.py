@@ -521,22 +521,42 @@ def send_daily_attendance_summary():
         try:
             print(f"\n--- Processing Student: {student_id} ---")
             
-            mobile_no = frappe.get_value("Student", student_id, "custom_father_mobile_number")
+            # Get the correct Student Group from an attendance record for today
+            student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
+
+            # --- START: Temporary ECE Filter ---
+            # This condition will be removed after testing is complete.
+            if not student_group or not ("ECE" in student_group and ("SEM-03" in student_group or "SEM-04" in student_group)):
+                print(f"Skipping student {student_id} from group '{student_group}' as it does not match ECE SEM-03/04 criteria.")
+                continue
+            # --- END: Temporary ECE Filter ---
+
+            # Get student's custom ID and mobile number
+            student_doc = frappe.get_doc("Student", student_id)
+            mobile_no = student_doc.get("custom_father_mobile_number")
+            reg_no = student_doc.get("custom_student_id")
             
             if not mobile_no:
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
                 continue
+
+            # --- START: Prepend country code to mobile number ---
+            if not mobile_no.startswith("91"):
+                mobile_no = "91" + mobile_no
+            # --- END: Prepend country code ---
             
             # 4. Calculate Summary: Attended Classes (Attd)
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
             
-            # --- FINAL FIX: Calculate Total Classes based on submitted attendance records only ---
+            # 5. Calculate Summary: Total Classes (Con)
             total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
             
             print(f"Summary for {student_id}: Attended={attended_count}, Total Classes (recorded)={total_classes}")
 
             # 6. Construct the DLT-compliant message
-            ward_variable = f"({student_id})"
+            # --- START: Use custom student ID (reg_no) for the message ---
+            ward_variable = f"({reg_no or student_id})" # Fallback to original ID if custom field is empty
+            # --- END: Use custom student ID ---
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
             attd_con_variable = f"({attended_count}/{total_classes})"
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
@@ -544,9 +564,7 @@ def send_daily_attendance_summary():
             print(f"Constructed Message: {message_text}")
             
             # 7. Send the SMS
-            # message_id = send_summary_sms_helper(mobile_no, message_text)
-
-            message_id = "SMS_DISABLED_FOR_TESTING"
+            message_id = send_summary_sms_helper(mobile_no, message_text)
             
             # 8. Log the successful send to prevent duplicates
             if message_id:
