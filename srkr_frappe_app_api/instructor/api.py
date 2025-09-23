@@ -526,8 +526,8 @@ def send_daily_attendance_summary():
 
             # --- START: Temporary ECE Filter ---
             # This condition will be removed after testing is complete.
-            if not student_group or not ("ECE" in student_group and ("SEM-03" in student_group or "SEM-04" in student_group)):
-                print(f"Skipping student {student_id} from group '{student_group}' as it does not match ECE SEM-03/04 criteria.")
+            if not student_group or not ("ECE" in student_group and ("AY2526-SEM-03-A" in student_group)):
+                print(f"Skipping student {student_id} from group '{student_group}' as it does not match ECE AY2526-SEM-03-A criteria.")
                 continue
             # --- END: Temporary ECE Filter ---
 
