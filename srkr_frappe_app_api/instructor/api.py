@@ -503,17 +503,17 @@ def send_daily_attendance_summary():
     )
     print(f"Students already processed today: {already_processed_students}")
 
-    # 2. Get a unique list of students who were marked absent at least once today.
-    absent_students = frappe.get_all(
+    # --- MODIFICATION: Get all students with attendance, not just absent ones ---
+    students_with_attendance = frappe.get_all(
         "Student Attendance",
-        filters={"date": processing_date, "status": "Absent"},
+        filters={"date": processing_date}, # The "status":"Absent" filter has been removed
         fields=["DISTINCT student"],
         pluck="student"
     )
-    print(f"Found {len(absent_students)} absent students today: {absent_students}")
+    print(f"Found {len(students_with_attendance)} students with attendance records today: {students_with_attendance}")
 
-    # 3. Loop through each absent student who has not yet been processed.
-    for student_id in absent_students:
+    # 3. Loop through each student who has not yet been processed.
+    for student_id in students_with_attendance:
         if student_id in already_processed_students:
             print(f"Skipping {student_id}, summary already sent.")
             continue
@@ -540,10 +540,9 @@ def send_daily_attendance_summary():
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
                 continue
 
-            # --- START: Prepend country code to mobile number ---
+            # Prepend country code to mobile number
             if not mobile_no.startswith("91"):
                 mobile_no = "91" + mobile_no
-            # --- END: Prepend country code ---
             
             # 4. Calculate Summary: Attended Classes (Attd)
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
@@ -554,9 +553,7 @@ def send_daily_attendance_summary():
             print(f"Summary for {student_id}: Attended={attended_count}, Total Classes (recorded)={total_classes}")
 
             # 6. Construct the DLT-compliant message
-            # --- START: Use custom student ID (reg_no) for the message ---
-            ward_variable = f"({reg_no or student_id})" # Fallback to original ID if custom field is empty
-            # --- END: Use custom student ID ---
+            ward_variable = f"({reg_no or student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
             attd_con_variable = f"({attended_count}/{total_classes})"
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
