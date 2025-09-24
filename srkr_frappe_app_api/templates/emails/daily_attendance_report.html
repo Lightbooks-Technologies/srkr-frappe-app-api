@@ -1,0 +1,43 @@
+<!-- File Path: apps/srkr_frappe_app_api/templates/emails/daily_attendance_report.html -->
+
+<h3>Daily Attendance Status for {{ report_date }}</h3>
+
+<p>Here is the summary of attendance marking status for today.</p>
+
+<table style="width: 100%; border-collapse: collapse; border: 1px solid #ccc;">
+    <thead>
+        <tr style="background-color: #f2f2f2;">
+            {% for col in columns %}
+            <th style="padding: 8px; border: 1px solid #ccc; text-align: left;">{{ col.label }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in data %}
+        <tr>
+            {% for col in columns %}
+            <td style="padding: 8px; border: 1px solid #ccc;">
+                {% set value = row.get(col.fieldname) %}
+                
+                {# Apply the same color coding as the report #}
+                {% if col.fieldname == 'status' %}
+                    {% if value == 'Not Taken' %}
+                        <span style="color: red; font-weight: bold;">{{ value }}</span>
+                    {% elif value == 'Partial' %}
+                        <span style="color: orange; font-weight: bold;">{{ value }}</span>
+                    {% elif value == 'Taken' %}
+                        <span style="color: green; font-weight: bold;">{{ value }}</span>
+                    {% else %}
+                        {{ value }}
+                    {% endif %}
+                {% else %}
+                    {{ value }}
+                {% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<p><em>This is an automated email.</em></p>

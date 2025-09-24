@@ -11,6 +11,12 @@ frappe.query_reports["Daily Attendance Status"] = {
             "default": frappe.datetime.get_today()
         },
         {
+            "fieldname": "program",
+            "label": __("Program"),
+            "fieldtype": "Link",
+            "options": "Program"
+        },
+        {
             "fieldname": "instructor",
             "label": __("Instructor"),
             "fieldtype": "Link",

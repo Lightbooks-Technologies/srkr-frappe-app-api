@@ -166,8 +166,13 @@ scheduler_events = {
 		"srkr_frappe_app_api.examination.tasks.sync_all_active_students"
 	],
     "cron": {
-        "0 18 * * *": [  # This runs at 6:00 PM (18:00) server time every day
+        # This is your existing job that runs at 6:00 PM
+        "0 18 * * *": [
             "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
+        ],
+        # This is your new job that runs at 5:00 PM (17:00) server time every day
+        "30 11 * * *": [
+            "srkr_frappe_app_api.srkr_frappe_app_api.report.daily_attendance_status.daily_attendance_status.send_daily_attendance_report"
         ]
     }
 # 	"hourly": [

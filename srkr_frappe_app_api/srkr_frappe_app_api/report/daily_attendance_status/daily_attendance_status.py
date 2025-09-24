@@ -1,9 +1,25 @@
+# Copyright (c) 2025, Frappe Technologies Pvt. Ltd. and contributors
+# For license information, please see license.txt
+
 import frappe
 from frappe import _
+import csv
+import io
+import datetime
+
+# ====================================================================
+# SECTION 1: ORIGINAL REPORT SCRIPT
+# ====================================================================
 
 def execute(filters=None):
-    columns = [
+    columns = get_report_columns()
+    data = get_report_data(filters)
+    return columns, data
+
+def get_report_columns():
+    return [
         {"fieldname": "date", "label": _("Date"), "fieldtype": "Date", "width": 100},
+        {"fieldname": "program", "label": _("Program"), "fieldtype": "Link", "options": "Program", "width": 200},
         {"fieldname": "course", "label": _("Course"), "fieldtype": "Link", "options": "Course", "width": 250},
         {"fieldname": "instructor", "label": _("Instructor"), "fieldtype": "Data", "width": 200},
         {"fieldname": "student_group", "label": _("Student Group"), "fieldtype": "Link", "options": "Student Group", "width": 200},
@@ -12,15 +28,11 @@ def execute(filters=None):
         {"fieldname": "status", "label": _("Status"), "fieldtype": "Data", "width": 120}
     ]
 
-    data = get_data(filters)
-    
-    return columns, data
-
-def get_data(filters):
-    # This query now includes the logic for "Partial" attendance.
+def get_report_data(filters):
     query = """
         SELECT
             cs.schedule_date as date,
+            sg.program,
             c.course_name as course,
             cs.instructor_name as instructor,
             cs.student_group,
@@ -34,29 +46,69 @@ def get_data(filters):
         FROM
             `tabCourse Schedule` AS cs
         JOIN `tabCourse` AS c ON cs.course = c.name
+        JOIN `tabStudent Group` AS sg ON cs.student_group = sg.name
         LEFT JOIN `tabStudent Attendance` AS sa ON cs.name = sa.course_schedule
     """
-    
-    conditions = ["cs.schedule_date = %(date)s"]
-    
-    if filters.get("instructor"):
-        conditions.append("cs.instructor = %(instructor)s")
-    
-    if filters.get("student_group"):
-        conditions.append("cs.student_group = %(student_group)s")
-
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-
-    query += """
-        GROUP BY cs.name
-        ORDER BY cs.from_time ASC
-    """
-
+    conditions = []
+    if filters.get("date"): conditions.append("cs.schedule_date = %(date)s")
+    if filters.get("program"): conditions.append("sg.program = %(program)s")
+    if filters.get("instructor"): conditions.append("cs.instructor = %(instructor)s")
+    if filters.get("student_group"): conditions.append("cs.student_group = %(student_group)s")
+    if conditions: query += " WHERE " + " AND ".join(conditions)
+    query += " GROUP BY cs.name ORDER BY cs.from_time ASC"
     all_data = frappe.db.sql(query, filters, as_dict=1)
-
     status_filter = filters.get("status")
     if status_filter and status_filter != "All":
         return [row for row in all_data if row.status == status_filter]
-    else:
-        return all_data
+    return all_data
+
+# ====================================================================
+# SECTION 2: SCHEDULED EMAIL FUNCTIONALITY
+# ====================================================================
+
+def send_daily_attendance_report():
+    recipients = ["pramod@lightbooks.io"]
+    if not recipients:
+        print("ERROR: No recipients are hardcoded in the script.")
+        return
+
+    today_string = str(datetime.date.today())
+    filters = frappe._dict({"date": today_string})
+    
+    try:
+        columns = get_report_columns()
+        data = get_report_data(filters)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Daily Attendance Report Generation Failed")
+        return
+
+    if not data:
+        # Using print() here is safe and will show up in the console/logs
+        print("INFO: No attendance data for today. Skipping report email.")
+        return
+
+    today_formatted = datetime.date.today().strftime("%d %B %Y")
+    subject = f"Daily Attendance Status Report - {today_formatted}"
+    
+    html_content = frappe.render_template(
+        "templates/emails/daily_attendance_report.html",
+        {"report_date": today_formatted, "columns": columns, "data": data}
+    )
+
+    csv_content = create_csv_from_report(columns, data)
+    attachment = {"fname": f"daily-attendance-status-{today_string}.csv", "fcontent": csv_content.encode('utf-8')}
+
+    # This is the line that sends the email
+    frappe.sendmail(recipients=recipients, subject=subject, message=html_content, attachments=[attachment], now=True)
+    
+    # THE FINAL FIX: This is now a simple print statement that cannot fail.
+    print(f"Daily Attendance Report sent to {', '.join(recipients)}.")
+
+def create_csv_from_report(columns, data):
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    writer.writerow([col['label'] for col in columns])
+    column_fieldnames = [col['fieldname'] for col in columns]
+    for row_dict in data:
+        writer.writerow([row_dict.get(fieldname, "") for fieldname in column_fieldnames])
+    return csv_buffer.getvalue()
