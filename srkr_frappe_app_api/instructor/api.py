@@ -457,53 +457,37 @@ def make_attendance_records(
 # --- START: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
 # ------------------------------------------------------------------
 
-def send_summary_sms_helper(mobile_no, message_text):
-    """Helper function to call the SMS API and return the campaign ID."""
+def send_summary_sms_helper(mobile_no, message_text, template_id):
+    """Generic helper function to call the SMS API."""
     API_URL = "https://smslogin.co/v3/api.php"
     API_KEY = "441580e5effd27db3eaa"
     USERNAME = "srkrec"
     SENDER_ID = "SRKREC"
-    TEMPLATE_ID = "1707163646397399883"
     
-    params = {
-        "username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID,
-        "mobile": mobile_no, "message": message_text, "templateid": TEMPLATE_ID
-    }
+    params = {"username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID, "mobile": mobile_no, "message": message_text, "templateid": template_id}
     
     try:
         response = requests.get(API_URL, params=params, timeout=10)
         response.raise_for_status()
         response_text = response.text
-        if 'campid' in response_text:
-            campid = response_text.split("'")[3] 
-        else:
-            campid = response_text
-            
+        campid = response_text.split("'")[3] if 'campid' in response_text else response_text
         print(f"SMS API Success for {mobile_no}. Response: {response.text}")
         return campid
     except Exception as e:
         print(f"SMS API Failed for {mobile_no}. Error: {e}")
-        frappe.log_error(message=frappe.get_traceback(), title=f"SMS API Call Failed for {mobile_no}")
+        frappe.log_error(frappe.get_traceback(), title=f"SMS API Call Failed for {mobile_no}")
         return None
 
-# --- THIS IS THE FINAL CORRECTED FUNCTION ---
 @frappe.whitelist()
 def send_daily_attendance_summary():
-    """
-    Scheduled function to send a single consolidated SMS to parents of absent students.
-    """
+    """Scheduled function to send a consolidated SMS to parents of absent students."""
     processing_date = today()
-    print(f"--- Running Daily Attendance Summary for {processing_date} ---")
+    print(f"--- Running Daily Student Attendance Summary for {processing_date} ---")
 
-    # 1. Get a list of students for whom a summary has ALREADY been sent today.
-    already_processed_students = frappe.get_all(
-        "Sent SMS Summary Log",
-        filters={"date": processing_date},
-        pluck="student"
-    )
-    print(f"Students already processed today: {already_processed_students}")
+    already_processed = [d.recipient for d in frappe.get_all("SMS Log", filters={"date": processing_date, "recipient_type": "Student"}, fields=["recipient"])]
+    print(f"Students already processed today: {already_processed}")
 
-    # 2. Get a unique list of students who were marked absent at least once today.
+    # --- LOGIC RESTORED: Get a unique list of students who were marked absent at least once today. ---
     absent_students = frappe.get_all(
         "Student Attendance",
         filters={"date": processing_date, "status": "Absent"},
@@ -512,16 +496,13 @@ def send_daily_attendance_summary():
     )
     print(f"Found {len(absent_students)} absent students today: {absent_students}")
 
-    # 3. Loop through each absent student who has not yet been processed.
+    # --- LOGIC RESTORED: Loop through each absent student who has not yet been processed. ---
     for student_id in absent_students:
-        if student_id in already_processed_students:
-            print(f"Skipping {student_id}, summary already sent.")
+        if student_id in already_processed:
+            print(f"Skipping student {student_id}, summary already sent.")
             continue
-
         try:
             print(f"\n--- Processing Student: {student_id} ---")
-            
-            # Get the correct Student Group from an attendance record for today
             student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
 
             # --- START: Temporary ECE Filter ---
@@ -529,60 +510,92 @@ def send_daily_attendance_summary():
             if not student_group or not ("ECE" in student_group and ("AY2526-SEM-03-A" in student_group)):
                 print(f"Skipping student {student_id} from group '{student_group}' as it does not match ECE AY2526-SEM-03-A criteria.")
                 continue
-            # --- END: Temporary ECE Filter ---
-
-            # Get student's custom ID and mobile number
             student_doc = frappe.get_doc("Student", student_id)
-            mobile_no = student_doc.get("custom_father_mobile_number")
-            reg_no = student_doc.get("custom_student_id")
-            
-            if not mobile_no:
-                print(f"Warning: No mobile number for student {student_id}. Skipping.")
-                continue
-
-            # --- START: Prepend country code to mobile number ---
-            if not mobile_no.startswith("91"):
-                mobile_no = "91" + mobile_no
-            # --- END: Prepend country code ---
-            
-            # 4. Calculate Summary: Attended Classes (Attd)
+            mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
+            if not mobile_no: print(f"Warning: No mobile number for student {student_id}. Skipping."); continue
+            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
-            
-            # 5. Calculate Summary: Total Classes (Con)
             total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
-            
-            print(f"Summary for {student_id}: Attended={attended_count}, Total Classes (recorded)={total_classes}")
-
-            # 6. Construct the DLT-compliant message
-            # --- START: Use custom student ID (reg_no) for the message ---
-            ward_variable = f"({reg_no or student_id})" # Fallback to original ID if custom field is empty
-            # --- END: Use custom student ID ---
+            print(f"Summary for {student_id}: Attended={attended_count}, Total (recorded)={total_classes}")
+            ward_variable = f"({reg_no or student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
             attd_con_variable = f"({attended_count}/{total_classes})"
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
-            
             print(f"Constructed Message: {message_text}")
             
-            # 7. Send the SMS
-            message_id = send_summary_sms_helper(mobile_no, message_text)
+            # UNCOMMENT to send SMS
+            message_id = send_summary_sms_helper(mobile_no, message_text, "1707163646397399883")
+            # message_id = "STUDENT_SMS_DISABLED"
             
-            # 8. Log the successful send to prevent duplicates
             if message_id:
-                log_doc = frappe.new_doc("Sent SMS Summary Log")
-                log_doc.student = student_id
+                log_doc = frappe.new_doc("SMS Log")
+                log_doc.recipient_type = "Student"
+                log_doc.recipient = student_id
                 log_doc.date = processing_date
                 log_doc.message_id = message_id
                 log_doc.insert(ignore_permissions=True)
                 frappe.db.commit()
-                print(f"Successfully sent summary and logged for {student_id}.")
-
+                print(f"Successfully logged summary for student {student_id}.")
         except Exception as e:
-            print(f"!!! AN ERROR OCCURRED for student {student_id}: {e}")
-            frappe.log_error(frappe.get_traceback(), f"Failed to process summary for student {student_id}")
-            frappe.db.rollback()
+            print(f"!!! ERROR for student {student_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Summary failed for student {student_id}"); frappe.db.rollback()
+    print("--- Daily Student Attendance Summary complete. ---")
 
-    print("--- Daily Attendance Summary run complete. ---")
+@frappe.whitelist()
+def send_instructor_attendance_reminders():
+    """Scheduled function to find instructors with missed attendance and send a reminder."""
+    processing_date = today()
+    print(f"--- Running Instructor Attendance Reminder for {processing_date} ---")
 
-# ------------------------------------------------------------------
-# --- END: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
-# ------------------------------------------------------------------
+    already_reminded = [d.recipient for d in frappe.get_all("SMS Log", filters={"date": processing_date, "recipient_type": "Instructor"}, fields=["recipient"])]
+    print(f"Instructors already reminded today: {already_reminded}")
+
+    all_scheduled_classes = frappe.get_all("Course Schedule", filters={"schedule_date": processing_date}, fields=["name", "instructor"])
+    scheduled_ids = {cs['name'] for cs in all_scheduled_classes}
+    if not scheduled_ids: print("No classes scheduled today. Exiting."); return
+    taken_attendance_ids = set(frappe.get_all("Student Attendance", filters={"date": processing_date}, fields=["DISTINCT course_schedule"], pluck="course_schedule"))
+    missed_schedule_ids = scheduled_ids - taken_attendance_ids
+    if not missed_schedule_ids: print("All attendance recorded. Exiting."); return
+    print(f"Found {len(missed_schedule_ids)} classes with pending attendance.")
+    
+    instructors_with_pending = {}
+    for cs in all_scheduled_classes:
+        if cs['name'] in missed_schedule_ids and cs.get('instructor'):
+            instructors_with_pending.setdefault(cs['instructor'], 0)
+            instructors_with_pending[cs['instructor']] += 1
+    
+    print(f"Instructors with pending attendance: {list(instructors_with_pending.keys())}")
+
+    for instructor_id, pending_count in instructors_with_pending.items():
+        if instructor_id in already_reminded:
+            print(f"Skipping instructor {instructor_id}, already reminded."); continue
+        try:
+            print(f"\n--- Processing Instructor: {instructor_id} ---")
+            instructor_doc = frappe.get_doc("Instructor", instructor_id)
+            employee_id = instructor_doc.employee
+            if not employee_id: print(f"Warning: Instructor {instructor_id} not linked to an Employee."); continue
+            mobile_no = frappe.get_value("Employee", employee_id, "cell_number")
+            if not mobile_no: print(f"Warning: Employee {employee_id} has no mobile number."); continue
+            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+            
+            var1 = instructor_doc.instructor_name
+            var2 = f"for {getdate(processing_date).strftime('%d-%m-%Y')}"
+            
+            message_text = f"Dear {var1}, SRKREC Reminder: You have pending attendance(s) {var2}. Please update the portal at your earliest convenience. - SRKREC"
+            print(f"Constructed Message: {message_text}")
+            
+            # UNCOMMENT to send SMS
+            # message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
+            message_id = "INSTRUCTOR_SMS_DISABLED"
+            
+            if message_id:
+                log_doc = frappe.new_doc("SMS Log")
+                log_doc.recipient_type = "Instructor"
+                log_doc.recipient = instructor_id
+                log_doc.date = processing_date
+                log_doc.message_id = message_id
+                log_doc.insert(ignore_permissions=True)
+                frappe.db.commit()
+                print(f"Successfully logged reminder for instructor {instructor_id}.")
+        except Exception as e:
+            print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
+    print("--- Instructor Attendance Reminder complete. ---")
