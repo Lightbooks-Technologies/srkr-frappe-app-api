@@ -454,7 +454,7 @@ def make_attendance_records(
 	student_attendance.submit()
 
 # ------------------------------------------------------------------
-# --- START: NEW CODE FOR CONSOLIDATED END-OF-DAY SMS SUMMARY ---
+# --- CONSOLIDATED SMS FUNCTIONS (STUDENTS AND INSTRUCTORS) ---
 # ------------------------------------------------------------------
 
 def send_summary_sms_helper(mobile_no, message_text, template_id):
@@ -484,7 +484,9 @@ def send_daily_attendance_summary():
     processing_date = today()
     print(f"--- Running Daily Student Attendance Summary for {processing_date} ---")
 
-    already_processed = [d.recipient for d in frappe.get_all("SMS Log", filters={"date": processing_date, "recipient_type": "Student"}, fields=["recipient"])]
+    # Use the existing "SMS Log" and filter by the "sent_to" convention
+    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
+    already_processed = [log.split(": ")[1] for log in logs_today if log and log.startswith("Student: ")]
     print(f"Students already processed today: {already_processed}")
 
     # --- LOGIC RESTORED: Get a unique list of students who were marked absent at least once today. ---
@@ -496,7 +498,6 @@ def send_daily_attendance_summary():
     )
     print(f"Found {len(absent_students)} absent students today: {absent_students}")
 
-    # --- LOGIC RESTORED: Loop through each absent student who has not yet been processed. ---
     for student_id in absent_students:
         if student_id in already_processed:
             print(f"Skipping student {student_id}, summary already sent.")
@@ -514,9 +515,12 @@ def send_daily_attendance_summary():
             mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
             if not mobile_no: print(f"Warning: No mobile number for student {student_id}. Skipping."); continue
             if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+            
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
             total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
+            
             print(f"Summary for {student_id}: Attended={attended_count}, Total (recorded)={total_classes}")
+            
             ward_variable = f"({reg_no or student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
             attd_con_variable = f"({attended_count}/{total_classes})"
@@ -529,10 +533,10 @@ def send_daily_attendance_summary():
             
             if message_id:
                 log_doc = frappe.new_doc("SMS Log")
-                log_doc.recipient_type = "Student"
-                log_doc.recipient = student_id
-                log_doc.date = processing_date
-                log_doc.message_id = message_id
+                log_doc.sent_on = processing_date
+                log_doc.message = message_text
+                log_doc.requested_numbers = mobile_no
+                log_doc.sent_to = f"Student: {student_id}" # Using the convention
                 log_doc.insert(ignore_permissions=True)
                 frappe.db.commit()
                 print(f"Successfully logged summary for student {student_id}.")
@@ -540,62 +544,86 @@ def send_daily_attendance_summary():
             print(f"!!! ERROR for student {student_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Summary failed for student {student_id}"); frappe.db.rollback()
     print("--- Daily Student Attendance Summary complete. ---")
 
+# In your api.py file, replace the old/duplicated version of this function with this new one.
+
+# In your api.py file, replace the old/duplicated version of this function with this new one.
+
 @frappe.whitelist()
 def send_instructor_attendance_reminders():
-    """Scheduled function to find instructors with missed attendance and send a reminder."""
+    """
+    Scheduled function to find instructors with missed attendance and send a reminder.
+    (Optimized Logic)
+    """
     processing_date = today()
     print(f"--- Running Instructor Attendance Reminder for {processing_date} ---")
 
-    already_reminded = [d.recipient for d in frappe.get_all("SMS Log", filters={"date": processing_date, "recipient_type": "Instructor"}, fields=["recipient"])]
+    # Use the existing "SMS Log" and filter by the "sent_to" convention
+    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
+    already_reminded = [log.split(": ")[1] for log in logs_today if log and log.startswith("Instructor: ")]
     print(f"Instructors already reminded today: {already_reminded}")
 
+    # 1. Get all classes scheduled for today and group them by instructor.
+    scheduled_classes_by_instructor = {}
     all_scheduled_classes = frappe.get_all("Course Schedule", filters={"schedule_date": processing_date}, fields=["name", "instructor"])
-    scheduled_ids = {cs['name'] for cs in all_scheduled_classes}
-    if not scheduled_ids: print("No classes scheduled today. Exiting."); return
-    taken_attendance_ids = set(frappe.get_all("Student Attendance", filters={"date": processing_date}, fields=["DISTINCT course_schedule"], pluck="course_schedule"))
-    missed_schedule_ids = scheduled_ids - taken_attendance_ids
-    if not missed_schedule_ids: print("All attendance recorded. Exiting."); return
-    print(f"Found {len(missed_schedule_ids)} classes with pending attendance.")
     
-    instructors_with_pending = {}
-    for cs in all_scheduled_classes:
-        if cs['name'] in missed_schedule_ids and cs.get('instructor'):
-            instructors_with_pending.setdefault(cs['instructor'], 0)
-            instructors_with_pending[cs['instructor']] += 1
-    
-    print(f"Instructors with pending attendance: {list(instructors_with_pending.keys())}")
+    if not all_scheduled_classes:
+        print("No classes were scheduled for today. Exiting.")
+        return
 
-    for instructor_id, pending_count in instructors_with_pending.items():
+    for schedule in all_scheduled_classes:
+        instructor_id = schedule.get("instructor")
+        if instructor_id:
+            # setdefault ensures the key exists before adding to the set
+            scheduled_classes_by_instructor.setdefault(instructor_id, set()).add(schedule.name)
+    
+    # 2. Get the set of all class schedules where attendance WAS taken today.
+    taken_attendance_ids = set(frappe.get_all(
+        "Student Attendance",
+        filters={"date": processing_date},
+        fields=["DISTINCT course_schedule"],
+        pluck="course_schedule"
+    ))
+    
+    # 3. Loop through each instructor and find their pending classes.
+    for instructor_id, their_scheduled_ids in scheduled_classes_by_instructor.items():
         if instructor_id in already_reminded:
             print(f"Skipping instructor {instructor_id}, already reminded."); continue
-        try:
-            print(f"\n--- Processing Instructor: {instructor_id} ---")
-            instructor_doc = frappe.get_doc("Instructor", instructor_id)
-            employee_id = instructor_doc.employee
-            if not employee_id: print(f"Warning: Instructor {instructor_id} not linked to an Employee."); continue
-            mobile_no = frappe.get_value("Employee", employee_id, "cell_number")
-            if not mobile_no: print(f"Warning: Employee {employee_id} has no mobile number."); continue
-            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
-            
-            var1 = instructor_doc.instructor_name
-            var2 = f"for {getdate(processing_date).strftime('%d-%m-%Y')}"
-            
-            message_text = f"Dear {var1}, SRKREC Reminder: You have pending attendance(s) {var2}. Please update the portal at your earliest convenience. - SRKREC"
-            print(f"Constructed Message: {message_text}")
-            
-            # UNCOMMENT to send SMS
-            # message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
-            message_id = "INSTRUCTOR_SMS_DISABLED"
-            
-            if message_id:
-                log_doc = frappe.new_doc("SMS Log")
-                log_doc.recipient_type = "Instructor"
-                log_doc.recipient = instructor_id
-                log_doc.date = processing_date
-                log_doc.message_id = message_id
-                log_doc.insert(ignore_permissions=True)
-                frappe.db.commit()
-                print(f"Successfully logged reminder for instructor {instructor_id}.")
-        except Exception as e:
-            print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
-    print("--- Instructor Attendance Reminder complete. ---")
+
+        # Find the difference: which of this instructor's classes are NOT in the "taken" set.
+        pending_ids = their_scheduled_ids - taken_attendance_ids
+        pending_count = len(pending_ids)
+
+        # If the instructor has pending classes, proceed to notify them.
+        if pending_count > 0:
+            try:
+                print(f"\n--- Processing Instructor: {instructor_id} with {pending_count} pending classes ---")
+                instructor_doc = frappe.get_doc("Instructor", instructor_id)
+                employee_id = instructor_doc.employee
+                if not employee_id: print(f"Warning: Instructor {instructor_id} not linked to an Employee."); continue
+                
+                mobile_no = frappe.get_value("Employee", employee_id, "cell_number")
+                if not mobile_no: print(f"Warning: Employee {employee_id} has no mobile number."); continue
+                if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+                
+                var1 = instructor_doc.instructor_name
+                var2 = f"for {getdate(processing_date).strftime('%d-%m-%Y')}"
+                message_text = f"Dear {var1}, SRKREC Reminder: You have pending attendance(s) {var2}. Please update the portal at your earliest convenience. - SRKREC"
+                print(f"Constructed Message: {message_text}")
+                
+                # UNCOMMENT to send SMS
+                # message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
+                message_id = "INSTRUCTOR_SMS_DISABLED"
+                
+                if message_id:
+                    log_doc = frappe.new_doc("SMS Log")
+                    log_doc.sent_on = processing_date
+                    log_doc.message = message_text
+                    log_doc.requested_numbers = mobile_no
+                    log_doc.sent_to = f"Instructor: {instructor_id}"
+                    log_doc.insert(ignore_permissions=True)
+                    frappe.db.commit()
+                    print(f"Successfully logged reminder for instructor {instructor_id}.")
+            except Exception as e:
+                print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
+
+    print("--- Instructor Attendance Reminder complete. ---")  
