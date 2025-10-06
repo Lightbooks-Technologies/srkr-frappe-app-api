@@ -506,10 +506,10 @@ def send_daily_attendance_summary():
             print(f"\n--- Processing Student: {student_id} ---")
             student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
 
-            # --- START: Temporary ECE Filter ---
+            # --- START: Temporary BTECH Filter ---
             # This condition will be removed after testing is complete.
-            if not student_group or not ("ECE" in student_group and ("AY2526-SEM-03-A" in student_group)):
-                print(f"Skipping student {student_id} from group '{student_group}' as it does not match ECE AY2526-SEM-03-A criteria.")
+            if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group or "SEM-05" in student_group)):
+                print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-03 or SEM-05 criteria.")
                 continue
             student_doc = frappe.get_doc("Student", student_id)
             mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
@@ -611,8 +611,8 @@ def send_instructor_attendance_reminders():
                 print(f"Constructed Message: {message_text}")
                 
                 # UNCOMMENT to send SMS
-                # message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
-                message_id = "INSTRUCTOR_SMS_DISABLED"
+                message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
+                # message_id = "INSTRUCTOR_SMS_DISABLED"
                 
                 if message_id:
                     log_doc = frappe.new_doc("SMS Log")
