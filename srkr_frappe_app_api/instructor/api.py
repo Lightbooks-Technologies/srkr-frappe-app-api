@@ -177,6 +177,185 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
 
     return detailed_schedule
 
+@frappe.whitelist(allow_guest=True)
+def get_instructor_schedule_v2(instructor, start_date, end_date=None):
+    if not instructor or not start_date:
+        frappe.throw("Instructor ID and Start Date are required.")
+    
+    # --- Date Validation and Formatting (Unchanged) ---
+    try:
+        parsed_start_date_obj = getdate(start_date)
+        start_date_str = parsed_start_date_obj.strftime('%Y-%m-%d')
+    except Exception as e:
+        frappe.throw(f"Error processing Start Date: {e}")
+
+    if end_date:
+        try:
+            parsed_end_date_obj = getdate(end_date)
+            end_date_str = parsed_end_date_obj.strftime('%Y-%m-%d')
+        except Exception as e:
+            frappe.throw(f"Error processing End Date: {e}")
+    else:
+        end_date_str = start_date_str
+
+    if getdate(start_date_str) > getdate(end_date_str):
+        frappe.throw("Start Date cannot be after End Date.")
+    # --- (End of Date validation) ---
+
+    # --- OPTIMIZATION 1: JOIN Course table to get course_name directly ---
+    q = """
+        SELECT
+            CS.`name`,
+            CS.`schedule_date`,
+            CS.`course`,
+            CS.`from_time`,
+            CS.`to_time`,
+            CS.`room`,
+            R.`room_name`,
+            C.`course_name`,  -- ADDED: Get course_name directly
+            CS.`student_group`,
+            CS.`color`,
+            CS.`class_schedule_color`,
+            CS.`instructor`,
+            CS.`co_instructor_1`,
+            CS.`co_instructor_2`
+        FROM
+            `tabCourse Schedule` AS CS
+        LEFT JOIN `tabRoom` AS R ON CS.room = R.name
+        LEFT JOIN `tabCourse` AS C ON CS.course = C.name  -- ADDED: Join with Course table
+        WHERE
+            (CS.`instructor` = %(instructor)s OR
+             CS.`co_instructor_1` = %(instructor)s OR
+             CS.`co_instructor_2` = %(instructor)s)
+            AND
+            CS.`schedule_date` BETWEEN %(start_date)s AND %(end_date)s
+        ORDER BY
+            CS.`schedule_date` ASC, CS.`from_time` ASC
+    """
+
+    course_schedules = frappe.db.sql(q, values={
+        "instructor": instructor,
+        "start_date": start_date_str,
+        "end_date": end_date_str
+    }, as_dict=True)
+
+    if not course_schedules:
+        return []
+
+    # --- OPTIMIZATION 2: Batch-fetch ALL attendance data in ONE query ---
+    course_schedule_ids = [cs.name for cs in course_schedules]
+    
+    attendance_query = """
+        SELECT
+            course_schedule,
+            status,
+            COUNT(*) as count
+        FROM
+            `tabStudent Attendance`
+        WHERE
+            course_schedule IN %(schedule_ids)s
+            AND docstatus = 1
+        GROUP BY
+            course_schedule, status
+    """
+    
+    attendance_data = frappe.db.sql(attendance_query, values={
+        "schedule_ids": course_schedule_ids
+    }, as_dict=True)
+    
+    # Build attendance lookup dictionary
+    attendance_lookup = {}
+    for att in attendance_data:
+        cs_id = att['course_schedule']
+        if cs_id not in attendance_lookup:
+            attendance_lookup[cs_id] = {
+                'total_students': 0,
+                'present_count': 0,
+                'absent_count': 0,
+                'on_leave_count': 0
+            }
+        
+        status = att['status']
+        count = att['count']
+        attendance_lookup[cs_id]['total_students'] += count
+        
+        if status == "Present":
+            attendance_lookup[cs_id]['present_count'] = count
+        elif status == "Absent":
+            attendance_lookup[cs_id]['absent_count'] = count
+        elif status == "On Leave":
+            attendance_lookup[cs_id]['on_leave_count'] = count
+    # --- END OPTIMIZATION 2 ---
+
+    detailed_schedule = []
+
+    for cs_record in course_schedules:
+        course_name_val = None
+        course_actual_id = None
+        calendar_id_val = None
+        start_datetime_formatted = None
+        end_datetime_formatted = None
+
+        # --- OPTIMIZATION 3: Use pre-fetched attendance data ---
+        attendance_summary = attendance_lookup.get(cs_record.name, {})
+
+        # --- OPTIMIZATION 4: Use course_name from JOIN instead of frappe.get_doc ---
+        if cs_record.course:
+            course_actual_id = cs_record.course
+            # Use the course_name from the JOIN query
+            course_name_val = cs_record.get('course_name') or f"Unknown Course ({course_actual_id})"
+            temp_id = str(course_actual_id).lower().strip()
+            calendar_id_val = re.sub(r'\s+', '_', temp_id)
+        else:
+            course_name_val = "Course Not Specified"
+
+        # --- Datetime Formatting (Unchanged) ---
+        from_time_obj = cs_record.from_time
+        to_time_obj = cs_record.to_time
+        schedule_date_obj = cs_record.schedule_date
+
+        if from_time_obj and to_time_obj and schedule_date_obj:
+            if isinstance(from_time_obj, str):
+                from_time_obj = frappe.utils.get_time(from_time_obj)
+            if isinstance(to_time_obj, str):
+                to_time_obj = frappe.utils.get_time(to_time_obj)
+
+            if isinstance(from_time_obj, timedelta) and isinstance(to_time_obj, timedelta):
+                from_hours = from_time_obj.seconds // 3600
+                from_minutes = (from_time_obj.seconds // 60) % 60
+                to_hours = to_time_obj.seconds // 3600
+                to_minutes = (to_time_obj.seconds // 60) % 60
+                
+                start_dt_obj = dt.combine(schedule_date_obj, dt.min.time()).replace(hour=from_hours, minute=from_minutes)
+                end_dt_obj = dt.combine(schedule_date_obj, dt.min.time()).replace(hour=to_hours, minute=to_minutes)
+                
+                start_datetime_formatted = start_dt_obj.strftime('%Y-%m-%d %H:%M')
+                end_datetime_formatted = end_dt_obj.strftime('%Y-%m-%d %H:%M')
+        
+        schedule_color = cs_record.get("color") or cs_record.get("class_schedule_color")
+
+        entry = {
+            "course_schedule_id": cs_record.name,
+            "date": cs_record.schedule_date.strftime('%Y-%m-%d'),
+            "course_name": course_name_val,
+            "course_id": course_actual_id,
+            "calendar_id": calendar_id_val,
+            "start_time": start_datetime_formatted,
+            "end_time": end_datetime_formatted,
+            "room_id": cs_record.get("room"),
+            "room_name": cs_record.get("room_name"),
+            "student_group": cs_record.get("student_group"),
+            "color": schedule_color,
+            "attendance_summary": attendance_summary,
+            "instructor": cs_record.instructor,
+            "co_instructor_1": cs_record.co_instructor_1,
+            "co_instructor_2": cs_record.co_instructor_2
+        }
+        detailed_schedule.append(entry)
+
+    return detailed_schedule
+
+
 @frappe.whitelist()
 def get_instructor_info():
     """
