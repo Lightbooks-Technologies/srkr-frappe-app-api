@@ -10,7 +10,7 @@ import requests  # <-- Added
 from urllib.parse import urlencode # <-- Added
 
 @frappe.whitelist(allow_guest=True)
-def get_instructor_schedule(instructor, start_date, end_date=None):
+def get_instructor_schedule_old(instructor, start_date, end_date=None):
     if not instructor or not start_date:
         frappe.throw("Instructor ID and Start Date are required.")
 
@@ -178,7 +178,7 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
     return detailed_schedule
 
 @frappe.whitelist(allow_guest=True)
-def get_instructor_schedule_v2(instructor, start_date, end_date=None):
+def get_instructor_schedule(instructor, start_date, end_date=None):
     if not instructor or not start_date:
         frappe.throw("Instructor ID and Start Date are required.")
     
