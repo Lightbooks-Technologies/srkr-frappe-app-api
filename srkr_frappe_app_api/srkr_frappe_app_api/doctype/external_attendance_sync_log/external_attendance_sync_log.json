@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2023-10-27 10:00:00.123456",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "sync_date",
+  "source_api",
+  "column_break_4",
+  "execution_time",
+  "records_processed",
+  "unmapped_students",
+  "log_details"
+ ],
+ "fields": [
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "In Progress\nSuccess\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sync_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Sync Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "execution_time",
+   "fieldtype": "Datetime",
+   "label": "Execution Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "records_processed",
+   "fieldtype": "Int",
+   "label": "Attendance Records Created",
+   "read_only": 1
+  },
+  {
+   "fieldname": "log_details",
+   "fieldtype": "Small Text",
+   "label": "Log Details",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_api",
+   "fieldtype": "Data",
+   "label": "Source API",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unmapped_students",
+   "fieldtype": "Int",
+   "label": "Students Not Found in Frappe",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2023-10-27 10:01:00.123456",
+ "modified_by": "Administrator",
+ "module": "srkr_frappe_app_api",
+ "name": "External Attendance Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
