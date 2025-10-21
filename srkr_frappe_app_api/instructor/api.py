@@ -1,181 +1,16 @@
 # srkr_frappe_app_api/srkr_frappe_app_api/instructor/api.py
 
 import frappe
-from frappe.utils import getdate, get_time, today # <-- Added 'today'
+from frappe.utils import getdate, get_time, today, now_datetime # <-- Added 'today'
 import re 
 from datetime import timedelta, datetime as dt
 import json
 from frappe import _
 import requests  # <-- Added
 from urllib.parse import urlencode # <-- Added
+from datetime import time, timedelta, datetime
 
-@frappe.whitelist(allow_guest=True)
-def get_instructor_schedule_old(instructor, start_date, end_date=None):
-    if not instructor or not start_date:
-        frappe.throw("Instructor ID and Start Date are required.")
 
-    # --- Date Validation and Formatting (Unchanged) ---
-    try:
-        parsed_start_date_obj = getdate(start_date)
-        start_date_str = parsed_start_date_obj.strftime('%Y-%m-%d')
-    except Exception as e:
-        frappe.throw(f"Error processing Start Date: {e}")
-
-    if end_date:
-        try:
-            parsed_end_date_obj = getdate(end_date)
-            end_date_str = parsed_end_date_obj.strftime('%Y-%m-%d')
-        except Exception as e:
-            frappe.throw(f"Error processing End Date: {e}")
-    else:
-        end_date_str = start_date_str
-
-    if getdate(start_date_str) > getdate(end_date_str):
-        frappe.throw("Start Date cannot be after End Date.")
-    # --- (End of Date validation) ---
-
-    # --- CORE MODIFICATION: Use frappe.db.sql with a JOIN ---
-    # We join with 'tabRoom' to fetch the room_name directly in one query.
-    # We use table aliases (CS for Course Schedule, R for Room) for clarity.
-    q = """
-        SELECT
-            CS.`name`,
-            CS.`schedule_date`,
-            CS.`course`,
-            CS.`from_time`,
-            CS.`to_time`,
-            CS.`room`,
-            R.`room_name`, -- <<< CHANGE: Fetched the room_name
-            CS.`student_group`,
-            CS.`color`,
-            CS.`class_schedule_color`,
-            CS.`instructor`,
-            CS.`co_instructor_1`,
-            CS.`co_instructor_2`
-        FROM
-            `tabCourse Schedule` AS CS
-        LEFT JOIN `tabRoom` AS R ON CS.room = R.name -- <<< CHANGE: Joined with the Room table
-        WHERE
-            (CS.`instructor` = %(instructor)s OR
-             CS.`co_instructor_1` = %(instructor)s OR
-             CS.`co_instructor_2` = %(instructor)s)
-            AND
-            CS.`schedule_date` BETWEEN %(start_date)s AND %(end_date)s
-        ORDER BY
-            CS.`schedule_date` asc, CS.`from_time` asc
-    """
-    
-    course_schedules = frappe.db.sql(q, values={
-        "instructor": instructor,
-        "start_date": start_date_str,
-        "end_date": end_date_str
-    }, as_dict=True)
-    # --- END OF CORE MODIFICATION ---
-
-    if not course_schedules:
-        return []
-
-    detailed_schedule = []
-
-    for cs_record in course_schedules:
-        # The rest of your processing logic is preserved below
-        course_name_val = None
-        course_actual_id = None
-        calendar_id_val = None
-        start_datetime_formatted = None
-        end_datetime_formatted = None
-
-        # --- Attendance Summary Handling (Unchanged) ---
-        attendance_summary = {}
-        if cs_record.name:
-            student_attendance_for_cs = frappe.get_all(
-                "Student Attendance",
-                filters={
-                    "course_schedule": cs_record.name,
-                    "docstatus": 1
-                },
-                fields=["status"]
-            )
-
-            if student_attendance_for_cs:
-                attendance_summary["total_students"] = len(student_attendance_for_cs)
-                attendance_summary["present_count"] = 0
-                attendance_summary["absent_count"] = 0
-                attendance_summary["on_leave_count"] = 0
-
-                for att_entry in student_attendance_for_cs:
-                    if att_entry.status == "Present":
-                        attendance_summary["present_count"] += 1
-                    elif att_entry.status == "Absent":
-                        attendance_summary["absent_count"] += 1
-                    elif att_entry.status == "On Leave":
-                        attendance_summary["on_leave_count"] += 1
-
-        # --- Course Name Handling (Unchanged) ---
-        if cs_record.course:
-            course_actual_id = cs_record.course
-            try:
-                course_doc = frappe.get_doc("Course", course_actual_id)
-                course_name_val = course_doc.course_name
-                temp_id = str(course_actual_id).lower().strip()
-                calendar_id_val = re.sub(r'\s+', '_', temp_id)
-            except frappe.DoesNotExistError:
-                course_name_val = f"Unknown Course ({course_actual_id})"
-                temp_id = str(course_actual_id).lower().strip()
-                calendar_id_val = re.sub(r'\s+', '_', temp_id)
-            except Exception:
-                course_name_val = f"Error fetching course ({course_actual_id})"
-                temp_id = str(course_actual_id).lower().strip()
-                calendar_id_val = re.sub(r'\s+', '_', temp_id)
-        else:
-            course_name_val = "Course Not Specified"
-
-        # --- Datetime Formatting (Unchanged) ---
-        from_time_obj = cs_record.from_time
-        to_time_obj = cs_record.to_time
-        schedule_date_obj = cs_record.schedule_date
-
-        if from_time_obj and to_time_obj and schedule_date_obj:
-            if isinstance(from_time_obj, str):
-                from_time_obj = frappe.utils.get_time(from_time_obj)
-            if isinstance(to_time_obj, str):
-                to_time_obj = frappe.utils.get_time(to_time_obj)
-
-            if isinstance(from_time_obj, timedelta) and isinstance(to_time_obj, timedelta):
-                from_hours = from_time_obj.seconds // 3600
-                from_minutes = (from_time_obj.seconds // 60) % 60
-                to_hours = to_time_obj.seconds // 3600
-                to_minutes = (to_time_obj.seconds // 60) % 60
-                
-                start_dt_obj = dt.combine(schedule_date_obj, dt.min.time()).replace(hour=from_hours, minute=from_minutes)
-                end_dt_obj = dt.combine(schedule_date_obj, dt.min.time()).replace(hour=to_hours, minute=to_minutes)
-                
-                start_datetime_formatted = start_dt_obj.strftime('%Y-%m-%d %H:%M')
-                end_datetime_formatted = end_dt_obj.strftime('%Y-%m-%d %H:%M')
-        
-        schedule_color = cs_record.get("color") or cs_record.get("class_schedule_color")
-
-        # --- MODIFICATION: Updated the final output dictionary ---
-        entry = {
-            "course_schedule_id": cs_record.name,
-            "date": cs_record.schedule_date.strftime('%Y-%m-%d'),
-            "course_name": course_name_val,
-            "course_id": course_actual_id,
-            "calendar_id": calendar_id_val,
-            "start_time": start_datetime_formatted,
-            "end_time": end_datetime_formatted,
-            "room_id": cs_record.get("room"),         # <<< CHANGE: Renamed 'room' to 'room_id' for clarity
-            "room_name": cs_record.get("room_name"),  # <<< CHANGE: Added the new 'room_name' field
-            "student_group": cs_record.get("student_group"),
-            "color": schedule_color,
-            "attendance_summary": attendance_summary,
-            "instructor": cs_record.instructor,
-            "co_instructor_1": cs_record.co_instructor_1,
-            "co_instructor_2": cs_record.co_instructor_2
-        }
-        detailed_schedule.append(entry)
-
-    return detailed_schedule
 
 @frappe.whitelist(allow_guest=True)
 def get_instructor_schedule(instructor, start_date, end_date=None):
@@ -355,7 +190,6 @@ def get_instructor_schedule(instructor, start_date, end_date=None):
 
     return detailed_schedule
 
-
 @frappe.whitelist()
 def get_instructor_info():
     """
@@ -526,7 +360,6 @@ def get_instructor_info():
     else:
         return {"message": f"No Employee record found linked to user {current_user_email}."}
 
-
 @frappe.whitelist()
 def mark_attendances(
     students_present, students_absent, course_schedule=None, student_group=None, date=None, taught_topics=None
@@ -632,10 +465,6 @@ def make_attendance_records(
 	student_attendance.save()
 	student_attendance.submit()
 
-# ------------------------------------------------------------------
-# --- CONSOLIDATED SMS FUNCTIONS (STUDENTS AND INSTRUCTORS) ---
-# ------------------------------------------------------------------
-
 def send_summary_sms_helper(mobile_no, message_text, template_id):
     """Generic helper function to call the SMS API."""
     API_URL = "https://smslogin.co/v3/api.php"
@@ -723,10 +552,6 @@ def send_daily_attendance_summary():
             print(f"!!! ERROR for student {student_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Summary failed for student {student_id}"); frappe.db.rollback()
     print("--- Daily Student Attendance Summary complete. ---")
 
-# In your api.py file, replace the old/duplicated version of this function with this new one.
-
-# In your api.py file, replace the old/duplicated version of this function with this new one.
-
 @frappe.whitelist()
 def send_instructor_attendance_reminders():
     """
@@ -806,3 +631,235 @@ def send_instructor_attendance_reminders():
                 print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
 
     print("--- Instructor Attendance Reminder complete. ---")  
+
+@frappe.whitelist()
+def sync_external_attendance(sync_date=None, local_file_path=None):
+    """
+    Fetches attendance from an external API and UPDATES or INSERTS Frappe records.
+    
+    Logic:
+    - If attendance record exists with different status → UPDATE it
+    - If attendance record doesn't exist → INSERT (CREATE) it
+    - If attendance record exists but not in API data → LEAVE IT ALONE (no changes)
+    
+    Morning/Afternoon Classification:
+    - Morning: Classes that START before 1:00 PM (from_time < 13:00)
+    - Afternoon: Classes that START at or after 1:00 PM (from_time >= 13:00)
+    """
+
+    # --- HELPER FUNCTION: This is our robust alternative to get_time_obj ---
+    def _to_time_obj(time_val):
+        """Converts a string or timedelta into a standard datetime.time object for comparison."""
+        if isinstance(time_val, time):
+            return time_val
+        if isinstance(time_val, timedelta):
+            total_seconds = time_val.total_seconds()
+            hours = int(total_seconds // 3600) % 24
+            minutes = int((total_seconds % 3600) // 60)
+            seconds = int(total_seconds % 60)
+            return time(hours, minutes, seconds)
+        if isinstance(time_val, str):
+            # Attempt to parse HH:MM:SS format
+            try:
+                return datetime.strptime(time_val, "%H:%M:%S").time()
+            except ValueError:
+                # Handle other potential string formats if necessary, or return None
+                return None
+        return None # Return None if the type is unexpected
+
+    # --- Main script starts here ---
+    if not sync_date:
+        sync_date = today()
+
+    log = frappe.new_doc("External Attendance Sync Log")
+    log.sync_date = sync_date
+    log.execution_time = now_datetime()
+    log.status = "In Progress"
+    log.source_api = "https://citi.srkramc.in/controllers/get_crt_attendance.php"
+    log.insert(ignore_permissions=True); frappe.db.commit()
+
+    try:
+        # --- 1. Fetch data ---
+        student_attendance_data = []
+        if local_file_path:
+            with open(local_file_path, 'r') as f: api_data = json.load(f)
+            student_attendance_data = api_data.get("attendance", [])
+        else:
+            try:
+                api_url = f"{log.source_api}?date={sync_date}"
+                response = requests.get(api_url, timeout=120)
+                response.raise_for_status()
+                api_data = response.json()
+            except requests.exceptions.RequestException as e: raise ConnectionError(f"API Connection Failed: {e}")
+            except json.JSONDecodeError: raise ValueError(f"Invalid JSON response from API. Response text: {response.text[:200]}")
+            student_attendance_data = api_data.get("attendance")
+
+        if not student_attendance_data or not isinstance(student_attendance_data, list):
+            log.status = "Success"; log.log_details = "API call successful but returned no attendance data."; log.save(); frappe.db.commit()
+            return
+
+        # --- 2. Map API IDs to Frappe Student Names ---
+        api_student_ids = list({s['student_id'] for s in student_attendance_data if s.get('student_id')})
+        student_id_map = {d.custom_student_id: d.name for d in frappe.get_all("Student", filters={"custom_student_id": ["in", api_student_ids]}, fields=["name", "custom_student_id"])}
+        frappe_student_names = list(student_id_map.values())
+        
+        # --- 3. Build the desired state from API data ---
+        desired_state = {}
+        all_schedules_list = frappe.db.sql("""
+            SELECT cs.name AS course_schedule_id, cs.student_group, cs.from_time, sgs.student
+            FROM `tabCourse Schedule` AS cs JOIN `tabStudent Group Student` AS sgs ON cs.student_group = sgs.parent
+            WHERE sgs.student IN %(names)s AND cs.schedule_date = %(date)s ORDER BY sgs.student, cs.from_time ASC
+        """, {"names": frappe_student_names, "date": sync_date}, as_dict=True)
+
+        schedules_by_student = {name: [] for name in frappe_student_names}
+        for s in all_schedules_list: schedules_by_student[s.student].append(s)
+
+        one_pm = time(13, 0) # Using the standard Python time object directly
+
+        for student_data in student_attendance_data:
+            frappe_student_name = student_id_map.get(student_data.get("student_id"))
+            if not frappe_student_name: continue
+            
+            student_schedules = schedules_by_student.get(frappe_student_name, [])
+            # FIXED: Use from_time to classify morning/afternoon
+            morning_schedules = [s for s in student_schedules if _to_time_obj(s.from_time) < one_pm]
+            afternoon_schedules = [s for s in student_schedules if _to_time_obj(s.from_time) >= one_pm]
+
+            for session_schedules, session_name in [(morning_schedules, "morning"), (afternoon_schedules, "afternoon")]:
+                status = str(student_data.get(session_name, {}).get("attendance", "")).title()
+                if status in ["Present", "Absent"]:
+                    for schedule in session_schedules:
+                        desired_state[(frappe_student_name, schedule.course_schedule_id)] = {
+                            "status": status, "student_name": student_data.get("student_name"), "student_group": schedule.student_group }
+        
+        # --- 4. CRITICAL: Detect and remove duplicate attendance records BEFORE processing ---
+        # Find all existing attendance records for these students on this date
+        all_existing_records = frappe.db.sql("""
+            SELECT name, student, course_schedule, status, creation
+            FROM `tabStudent Attendance`
+            WHERE student IN %(names)s 
+            AND date = %(date)s 
+            AND docstatus = 1
+            ORDER BY student, course_schedule, creation DESC
+        """, {"names": frappe_student_names, "date": sync_date}, as_dict=True)
+        
+        # Identify duplicates and keep only the most recent one
+        seen_keys = {}
+        duplicates_to_cancel = []
+        
+        for record in all_existing_records:
+            key = (record.student, record.course_schedule)
+            if key in seen_keys:
+                # This is a duplicate - mark for cancellation
+                duplicates_to_cancel.append(record.name)
+            else:
+                # First occurrence - keep this one
+                seen_keys[key] = record
+        
+        # Cancel duplicate records in bulk
+        if duplicates_to_cancel:
+            frappe.db.sql("""
+                UPDATE `tabStudent Attendance`
+                SET docstatus = 2
+                WHERE name IN %(names)s
+            """, {"names": duplicates_to_cancel})
+            frappe.log_error(f"Cancelled {len(duplicates_to_cancel)} duplicate attendance records", "Duplicate Attendance Cleanup")
+        
+        # --- 5. UPDATE or INSERT logic (no cancellation) ---
+        # Now seen_keys contains only unique records (one per student per course_schedule)
+        existing_state = {(r.student, r.course_schedule): {"status": r.status, "name": r.name} for r in seen_keys.values()}
+        
+        records_to_update = []
+        docs_to_insert = []
+        
+        for (student, schedule_id), data in desired_state.items():
+            key = (student, schedule_id)
+            if key in existing_state:
+                # Record exists - check if status needs updating
+                if existing_state[key]["status"] != data["status"]:
+                    records_to_update.append({
+                        "name": existing_state[key]["name"],
+                        "status": data["status"]
+                    })
+            else:
+                # Record doesn't exist - create it
+                docs_to_insert.append({
+                    "doctype": "Student Attendance",
+                    "student": student,
+                    "student_name": data["student_name"],
+                    "status": data["status"],
+                    "course_schedule": schedule_id,
+                    "student_group": data["student_group"],
+                    "date": sync_date,
+                    "docstatus": 1
+                })
+        
+        # --- 6. Perform bulk UPDATE (CRITICAL: Bulk operation, not one by one) ---
+        if records_to_update:
+            # Bulk update using a single SQL statement
+            update_cases = []
+            update_ids = []
+            for record in records_to_update:
+                update_ids.append(record["name"])
+                update_cases.append(f"WHEN '{record['name']}' THEN '{record['status']}'")
+            
+            if update_cases:
+                sql = f"""
+                    UPDATE `tabStudent Attendance`
+                    SET status = CASE name
+                        {' '.join(update_cases)}
+                    END
+                    WHERE name IN ({','.join(['%s'] * len(update_ids))})
+                """
+                frappe.db.sql(sql, update_ids)
+        
+        # --- 7. Perform bulk INSERT (CRITICAL: Bulk operation with duplicate prevention) ---
+        if docs_to_insert:
+            fields = ["student", "student_name", "status", "course_schedule", "student_group", "date", "docstatus"]
+            values = [[doc[field] for field in fields] for doc in docs_to_insert]
+            
+            try:
+                # Try Frappe's bulk_insert first
+                frappe.db.bulk_insert("Student Attendance", fields=fields, values=values, ignore_duplicates=True)
+            except Exception as e:
+                # Fallback to direct SQL with duplicate prevention
+                # CRITICAL: Use INSERT IGNORE to prevent duplicates
+                placeholders = ", ".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(values))
+                flat_values = [item for sublist in values for item in sublist]
+                
+                sql = f"""
+                    INSERT IGNORE INTO `tabStudent Attendance` 
+                    (`student`, `student_name`, `status`, `course_schedule`, `student_group`, `date`, `docstatus`)
+                    VALUES {placeholders}
+                """
+                frappe.db.sql(sql, flat_values)
+        
+        # --- 8. Final validation: Ensure no duplicates were created ---
+        validation_query = """
+            SELECT student, course_schedule, COUNT(*) as count
+            FROM `tabStudent Attendance`
+            WHERE student IN %(names)s 
+            AND date = %(date)s 
+            AND docstatus = 1
+            GROUP BY student, course_schedule
+            HAVING count > 1
+        """
+        duplicates_check = frappe.db.sql(validation_query, {"names": frappe_student_names, "date": sync_date}, as_dict=True)
+        
+        if duplicates_check:
+            error_msg = f"CRITICAL: Duplicates detected after sync! {len(duplicates_check)} duplicate combinations found."
+            frappe.log_error(error_msg, "Duplicate Attendance Error")
+            log.status = "Warning"
+            log.log_details = f"{error_msg}\nRecords Updated: {len(records_to_update)}\nRecords Created: {len(docs_to_insert)}"
+        else:
+            log.status = "Success"
+            log.log_details = (f"Sync Successful.\nDuplicates Cleaned: {len(duplicates_to_cancel)}\nRecords Updated: {len(records_to_update)}\nRecords Created: {len(docs_to_insert)}\nAPI Students: {len(api_student_ids)} | Frappe Students Found: {len(student_id_map)}")
+        
+        log.records_processed = len(records_to_update) + len(docs_to_insert)
+        log.unmapped_students = len(api_student_ids) - len(student_id_map)
+        log.save(); frappe.db.commit()
+
+    except Exception as e:
+        frappe.db.rollback(); log.status = "Failed"; log.log_details = f"An error occurred during sync override: \n{frappe.get_traceback()}"; log.save(); frappe.db.commit()
+        frappe.log_error("External Attendance Sync Failed", frappe.get_traceback())
+        

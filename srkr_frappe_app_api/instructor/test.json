@@ -1,0 +1,31 @@
+{
+    "date": "2025-10-20",
+    "total_students": 2,
+    "summary": {},
+    "attendance": [
+        {
+            "student_id": "24B91A0768",
+            "student_name": "MANDAVA YAGNA AKHIL SAI",
+            "branch": "CSE",
+            "date": "2024-05-25",
+            "morning": {
+                "attendance": "absent"
+            },
+            "afternoon": {
+                "attendance": "absent"
+            }
+        },
+        {
+            "student_id": "24B91A0767",
+            "student_name": "MANDAPATI VENKATA YAMINI",
+            "branch": "CSE",
+            "date": "2024-05-25",
+            "morning": {
+                "attendance": "present"
+            },
+            "afternoon": {
+                "attendance": "present"
+            }
+        }
+    ]
+}
