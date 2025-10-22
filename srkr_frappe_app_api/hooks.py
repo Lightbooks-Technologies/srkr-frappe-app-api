@@ -177,6 +177,10 @@ scheduler_events = {
         "0 17 * * *": [
             "srkr_frappe_app_api.srkr_frappe_app_api.report.daily_attendance_status.daily_attendance_status.send_daily_attendance_report"
         ],
+        # This is your new job that runs at 6:15 PM (18:15) server time every day
+        "15 18 * * *": [
+            "srkr_frappe_app_api.srkr_frappe_app_api.report.daily_attendance_status.daily_attendance_status.send_daily_attendance_report_to_main_admin"
+        ],
         "20 17 * * *": [
             "srkr_frappe_app_api.instructor.api.sync_external_attendance" 
             # Update 'your_app.utils.sync' to the actual path of your file

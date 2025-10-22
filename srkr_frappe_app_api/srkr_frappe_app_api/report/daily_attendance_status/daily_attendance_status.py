@@ -104,6 +104,7 @@ def send_daily_attendance_report():
     # THE FINAL FIX: This is now a simple print statement that cannot fail.
     print(f"Daily Attendance Report sent to {', '.join(recipients)}.")
 
+
 def create_csv_from_report(columns, data):
     csv_buffer = io.StringIO()
     writer = csv.writer(csv_buffer)
@@ -112,3 +113,42 @@ def create_csv_from_report(columns, data):
     for row_dict in data:
         writer.writerow([row_dict.get(fieldname, "") for fieldname in column_fieldnames])
     return csv_buffer.getvalue()
+
+def send_daily_attendance_report_to_main_admin():
+    recipients = ["pramod@lightbooks.io", "dean_academics@srkrec.ac.in", "principal@srkrec.ac.in"]
+    if not recipients:
+        print("ERROR: No recipients are hardcoded in the script.")
+        return
+
+    today_string = str(datetime.date.today())
+    filters = frappe._dict({"date": today_string})
+    
+    try:
+        columns = get_report_columns()
+        data = get_report_data(filters)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Daily Attendance Report Generation Failed")
+        return
+
+    if not data:
+        # Using print() here is safe and will show up in the console/logs
+        print("INFO: No attendance data for today. Skipping report email.")
+        return
+
+    today_formatted = datetime.date.today().strftime("%d %B %Y")
+    subject = f"Daily Attendance Status Report Principal and Dean - {today_formatted}"
+    
+    html_content = frappe.render_template(
+        "templates/emails/daily_attendance_report.html",
+        {"report_date": today_formatted, "columns": columns, "data": data}
+    )
+
+    csv_content = create_csv_from_report(columns, data)
+    attachment = {"fname": f"daily-attendance-status-{today_string}.csv", "fcontent": csv_content.encode('utf-8')}
+
+    # This is the line that sends the email
+    frappe.sendmail(recipients=recipients, subject=subject, message=html_content, attachments=[attachment], now=True)
+    
+    # THE FINAL FIX: This is now a simple print statement that cannot fail.
+    print(f"Daily Attendance Report sent to {', '.join(recipients)}.")
+
