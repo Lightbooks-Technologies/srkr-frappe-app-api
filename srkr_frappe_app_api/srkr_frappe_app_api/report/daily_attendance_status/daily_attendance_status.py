@@ -67,7 +67,7 @@ def get_report_data(filters):
 # ====================================================================
 
 def send_daily_attendance_report():
-    recipients = ["pramod@lightbooks.io", "prssvraju@srkrec.ac.in", "srkrcse2024@gmail.com", "srkritoffice@gmail.com", "srkraidsoffice@gmail.com", "eceoffice.srkr@gmail.com", "srkreeedepartment@gmail.com", "mechofficesrkr@gmail.com", "srkrhodce@gmail.com", "dean_academics@srkrec.ac.in", "principal@srkrec.ac.in", "hodmechsrkr@gmail.com"]
+    recipients = ["pramod@lightbooks.io", "prssvraju@srkrec.ac.in", "srkrcse2024@gmail.com", "srkritoffice@gmail.com", "srkraidsoffice@gmail.com", "eceoffice.srkr@gmail.com", "srkreeedepartment@gmail.com", "mechofficesrkr@gmail.com", "srkrhodce@gmail.com", "hodmechsrkr@gmail.com"]
     if not recipients:
         print("ERROR: No recipients are hardcoded in the script.")
         return
