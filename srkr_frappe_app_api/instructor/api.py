@@ -20,6 +20,12 @@ TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES = [
     'BTECH-SEM-05'
 ]
 
+# NOTE: For instructor reminders, only send notifications for missed attendance
+# that matches one of the following patterns. E.g., ['SEM-01'] for first semester.
+ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
+    'SEM-01'
+]
+
 # NOTE: Get these Template IDs from your SMS provider.
 WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399999' # Replace with actual ID
 CUMULATIVE_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399888' # Replace with actual ID
@@ -573,8 +579,8 @@ def send_daily_attendance_summary():
 @frappe.whitelist()
 def send_instructor_attendance_reminders():
     """
-    Scheduled function to find instructors with missed attendance and send a reminder.
-    (Optimized Logic)
+    Scheduled function to find instructors with missed attendance for ACTIVE student groups and send a reminder.
+    (Optimized Logic with Filtering)
     """
     processing_date = today()
     print(f"--- Running Instructor Attendance Reminder for {processing_date} ---")
@@ -595,7 +601,6 @@ def send_instructor_attendance_reminders():
     for schedule in all_scheduled_classes:
         instructor_id = schedule.get("instructor")
         if instructor_id:
-            # setdefault ensures the key exists before adding to the set
             scheduled_classes_by_instructor.setdefault(instructor_id, set()).add(schedule.name)
     
     # 2. Get the set of all class schedules where attendance WAS taken today.
@@ -613,12 +618,36 @@ def send_instructor_attendance_reminders():
 
         # Find the difference: which of this instructor's classes are NOT in the "taken" set.
         pending_ids = their_scheduled_ids - taken_attendance_ids
-        pending_count = len(pending_ids)
+        
+        # If the instructor has pending classes, proceed to check if they are relevant.
+        if pending_ids:
+            
+            # ***** MODIFIED SECTION START *****
+            # Check if any of the pending classes belong to an active student group.
+            
+            pending_schedule_groups = frappe.get_all(
+                "Course Schedule",
+                filters={"name": ["in", list(pending_ids)]},
+                fields=["student_group"]
+            )
+            
+            is_relevant_pending = False
+            for schedule in pending_schedule_groups:
+                student_group = schedule.get("student_group")
+                # Check if the group exists and if any active pattern is a substring of the group name
+                if student_group and any(pattern in student_group for pattern in ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS):
+                    is_relevant_pending = True
+                    break # A relevant class was found, no need to check further
 
-        # If the instructor has pending classes, proceed to notify them.
-        if pending_count > 0:
+            # If none of the pending classes were for active groups, skip this instructor.
+            if not is_relevant_pending:
+                print(f"Skipping instructor {instructor_id}; their {len(pending_ids)} pending classes are for non-active groups.")
+                continue
+            
+            # ***** MODIFIED SECTION END *****
+
             try:
-                print(f"\n--- Processing Instructor: {instructor_id} with {pending_count} pending classes ---")
+                print(f"\n--- Processing Instructor: {instructor_id} with relevant pending classes ---")
                 instructor_doc = frappe.get_doc("Instructor", instructor_id)
                 employee_id = instructor_doc.employee
                 if not employee_id: print(f"Warning: Instructor {instructor_id} not linked to an Employee."); continue
@@ -632,8 +661,7 @@ def send_instructor_attendance_reminders():
                 message_text = f"Dear {var1}, SRKREC Reminder: You have pending attendance(s) {var2}. Please update the portal at your earliest convenience. - SRKREC"
                 print(f"Constructed Message: {message_text}")
                 
-                # UNCOMMENT to send SMS
-                message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
+                message_id = send_summary_sms_helper(mobile_no, message_text, DAILY_INSTRUCTOR_ATTENDANCE_REMINDER_TEMPLATE)
                 # message_id = "INSTRUCTOR_SMS_DISABLED"
                 
                 if message_id:
@@ -648,7 +676,7 @@ def send_instructor_attendance_reminders():
             except Exception as e:
                 print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
 
-    print("--- Instructor Attendance Reminder complete. ---")  
+    print("--- Instructor Attendance Reminder complete. ---")
 
 @frappe.whitelist()
 def sync_external_attendance(sync_date=None, local_file_path=None):
