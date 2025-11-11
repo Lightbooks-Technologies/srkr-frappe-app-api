@@ -10,7 +10,28 @@ import requests  # <-- Added
 from urllib.parse import urlencode # <-- Added
 from datetime import time, timedelta, datetime
 
+# NOTE: Update this date at the beginning of each semester. - YYYY-MM-DD
+SEMESTER_START_DATE = '2024-02-12' 
 
+# NOTE: Add SUBSTRINGS of the Student Groups you want to send summaries to.
+# This is now a pattern match, not an exact match.
+TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES = [
+    'BTECH-SEM-03',
+    'BTECH-SEM-05'
+]
+
+# NOTE: For instructor reminders, only send notifications for missed attendance
+# that matches one of the following patterns. E.g., ['SEM-01'] for first semester.
+ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
+    'SEM-01'
+]
+
+# NOTE: Get these Template IDs from your SMS provider.
+WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399999' # Replace with actual ID
+CUMULATIVE_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399888' # Replace with actual ID
+
+DAILY_STUDENT_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399883'
+DAILY_INSTRUCTOR_ATTENDANCE_REMINDER_TEMPLATE = '1707175947082321519'
 
 @frappe.whitelist(allow_guest=True)
 def get_instructor_schedule(instructor, start_date, end_date=None):
@@ -516,6 +537,9 @@ def send_daily_attendance_summary():
 
             # --- START: Temporary BTECH Filter ---
             # This condition will be removed after testing is complete.
+
+            
+            # if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group or "SEM-05" in student_group)):
             if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group)):
                 print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-03 criteria.")
                 continue
@@ -555,8 +579,8 @@ def send_daily_attendance_summary():
 @frappe.whitelist()
 def send_instructor_attendance_reminders():
     """
-    Scheduled function to find instructors with missed attendance and send a reminder.
-    (Optimized Logic)
+    Scheduled function to find instructors with missed attendance for ACTIVE student groups and send a reminder.
+    (Optimized Logic with Filtering)
     """
     processing_date = today()
     print(f"--- Running Instructor Attendance Reminder for {processing_date} ---")
@@ -577,7 +601,6 @@ def send_instructor_attendance_reminders():
     for schedule in all_scheduled_classes:
         instructor_id = schedule.get("instructor")
         if instructor_id:
-            # setdefault ensures the key exists before adding to the set
             scheduled_classes_by_instructor.setdefault(instructor_id, set()).add(schedule.name)
     
     # 2. Get the set of all class schedules where attendance WAS taken today.
@@ -595,12 +618,36 @@ def send_instructor_attendance_reminders():
 
         # Find the difference: which of this instructor's classes are NOT in the "taken" set.
         pending_ids = their_scheduled_ids - taken_attendance_ids
-        pending_count = len(pending_ids)
+        
+        # If the instructor has pending classes, proceed to check if they are relevant.
+        if pending_ids:
+            
+            # ***** MODIFIED SECTION START *****
+            # Check if any of the pending classes belong to an active student group.
+            
+            pending_schedule_groups = frappe.get_all(
+                "Course Schedule",
+                filters={"name": ["in", list(pending_ids)]},
+                fields=["student_group"]
+            )
+            
+            is_relevant_pending = False
+            for schedule in pending_schedule_groups:
+                student_group = schedule.get("student_group")
+                # Check if the group exists and if any active pattern is a substring of the group name
+                if student_group and any(pattern in student_group for pattern in ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS):
+                    is_relevant_pending = True
+                    break # A relevant class was found, no need to check further
 
-        # If the instructor has pending classes, proceed to notify them.
-        if pending_count > 0:
+            # If none of the pending classes were for active groups, skip this instructor.
+            if not is_relevant_pending:
+                print(f"Skipping instructor {instructor_id}; their {len(pending_ids)} pending classes are for non-active groups.")
+                continue
+            
+            # ***** MODIFIED SECTION END *****
+
             try:
-                print(f"\n--- Processing Instructor: {instructor_id} with {pending_count} pending classes ---")
+                print(f"\n--- Processing Instructor: {instructor_id} with relevant pending classes ---")
                 instructor_doc = frappe.get_doc("Instructor", instructor_id)
                 employee_id = instructor_doc.employee
                 if not employee_id: print(f"Warning: Instructor {instructor_id} not linked to an Employee."); continue
@@ -614,8 +661,7 @@ def send_instructor_attendance_reminders():
                 message_text = f"Dear {var1}, SRKREC Reminder: You have pending attendance(s) {var2}. Please update the portal at your earliest convenience. - SRKREC"
                 print(f"Constructed Message: {message_text}")
                 
-                # UNCOMMENT to send SMS
-                message_id = send_summary_sms_helper(mobile_no, message_text, "1707175947082321519")
+                message_id = send_summary_sms_helper(mobile_no, message_text, DAILY_INSTRUCTOR_ATTENDANCE_REMINDER_TEMPLATE)
                 # message_id = "INSTRUCTOR_SMS_DISABLED"
                 
                 if message_id:
@@ -630,7 +676,7 @@ def send_instructor_attendance_reminders():
             except Exception as e:
                 print(f"!!! ERROR for instructor {instructor_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Reminder failed for instructor {instructor_id}"); frappe.db.rollback()
 
-    print("--- Instructor Attendance Reminder complete. ---")  
+    print("--- Instructor Attendance Reminder complete. ---")
 
 @frappe.whitelist()
 def sync_external_attendance(sync_date=None, local_file_path=None):
@@ -862,4 +908,248 @@ def sync_external_attendance(sync_date=None, local_file_path=None):
     except Exception as e:
         frappe.db.rollback(); log.status = "Failed"; log.log_details = f"An error occurred during sync override: \n{frappe.get_traceback()}"; log.save(); frappe.db.commit()
         frappe.log_error("External Attendance Sync Failed", frappe.get_traceback())
+
+@frappe.whitelist()
+def send_weekly_attendance_summary():
+    """
+    Scheduled to run weekly (e.g., Saturday).
+    Sends parents a summary of their ward's attendance for that specific week (Mon-Sat).
+    """
+    # 1. DEFINE SCOPE & TIME FRAME
+    processing_date = getdate(today())
+    if processing_date.weekday() != 5: # 5 = Saturday
+        print("Not a Saturday. Weekly summary will not be sent.")
+        return "Not a Saturday. Aborting."
+
+    end_of_week = processing_date
+    start_of_week = end_of_week - timedelta(days=5) # Monday
+    print(f"--- Running Weekly Attendance Summary for {start_of_week.strftime('%d-%m-%Y')} to {end_of_week.strftime('%d-%m-%Y')} ---")
+
+    # 2. PREVENT DUPLICATE MESSAGES
+    log_convention = "Weekly Summary: "
+    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
+    already_processed = [log.split(log_convention)[1] for log in logs_today if log and log.startswith(log_convention)]
+    print(f"Students with weekly summary already sent today: {already_processed}")
+
+    # 3. GET ALL ATTENDANCE DATA FOR THE WEEK IN ONE QUERY
+    weekly_data = frappe.db.sql("""
+        SELECT student, status, COUNT(*) as count
+        FROM `tabStudent Attendance`
+        WHERE date BETWEEN %(start_date)s AND %(end_date)s AND docstatus = 1
+        GROUP BY student, status
+    """, {"start_date": start_of_week, "end_date": end_of_week}, as_dict=True)
+
+    if not weekly_data:
+        print("No attendance data found for this week. Exiting.")
+        return "No attendance data found for the week."
+
+    # 4. PROCESS DATA INTO A CLEAN LOOKUP DICTIONARY
+    summary = {}
+    for row in weekly_data:
+        student_id = row.student
+        if student_id not in summary:
+            summary[student_id] = {"Present": 0, "Absent": 0, "On Leave": 0}
+        summary[student_id][row.status] = row.count
+    
+    # 5. GET STUDENT DETAILS (GROUP & CONTACT INFO) IN BULK
+    all_students_this_week = list(summary.keys())
+    student_details = frappe.get_all(
+        "Student",
+        filters={"name": ["in", all_students_this_week]},
+        fields=["name", "custom_student_id", "custom_father_mobile_number", "student_group"]
+    )
+    student_map = {s.name: s for s in student_details}
+
+    # 6. LOOP THROUGH STUDENTS, FILTER, AND SEND SMS
+    for student_id, attendance in summary.items():
+        if student_id in already_processed:
+            print(f"Skipping {student_id}, already processed.")
+            continue
+
+        student_info = student_map.get(student_id)
+        if not student_info:
+            continue
+
+        try:
+            student_group = student_info.get("student_group")
+            # ***** THE MODIFIED LOGIC IS HERE *****
+            # If the student has no group, or if their group name does not contain ANY of the patterns, skip them.
+            if not student_group or not any(pattern in student_group for pattern in TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES):
+                print(f"Skipping {student_id} from group '{student_group}' - does not match any target pattern.")
+                continue
+            
+            mobile_no = student_info.get("custom_father_mobile_number")
+            if not mobile_no:
+                print(f"Warning: No mobile number for student {student_id}. Skipping.")
+                continue
+            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+
+            attended_count = attendance.get("Present", 0)
+            total_classes = sum(attendance.values())
+            
+            if total_classes == 0: continue
+
+            # Construct and send the message
+            reg_no = student_info.get("custom_student_id") or student_id
+            date_range_str = f"from {start_of_week.strftime('%d-%m')} to {end_of_week.strftime('%d-%m')}"
+            message_text = f"Dear Parent, Your ward ({reg_no}) attended {attended_count} out of {total_classes} classes this week {date_range_str}. -Principal, SRKREC"
+            
+            print(f"To: {mobile_no}, Message: {message_text}")
+            message_id = send_summary_sms_helper(mobile_no, message_text, WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE)
+
+            # Log the action
+            if message_id:
+                frappe.get_doc({
+                    "doctype": "SMS Log",
+                    "sent_on": processing_date,
+                    "message": message_text,
+                    "requested_numbers": mobile_no,
+                    "sent_to": f"{log_convention}{student_id}"
+                }).insert(ignore_permissions=True)
+                frappe.db.commit()
+                print(f"Successfully logged weekly summary for {student_id}.")
+
+        except Exception as e:
+            print(f"!!! ERROR for student {student_id}: {e}")
+            frappe.log_error(frappe.get_traceback(), f"Weekly summary failed for {student_id}")
+            frappe.db.rollback()
+
+    print("--- Weekly Attendance Summary complete. ---")
+    return "Completed"
+
+
+@frappe.whitelist()
+def send_cumulative_attendance_summary():
+    """
+    Scheduled to run weekly (e.g., Saturday).
+    Sends parents a cumulative summary of attendance from the semester start to date.
+    """
+    # 1. DEFINE SCOPE & TIME FRAME
+    processing_date = getdate(today())
+    if processing_date.weekday() != 5: # 5 = Saturday
+        print("Not a Saturday. Cumulative summary will not be sent.")
+        return "Not a Saturday. Aborting."
+
+    end_of_week = processing_date
+    start_of_semester = getdate(SEMESTER_START_DATE)
+    print(f"--- Running Cumulative Attendance Summary from {start_of_semester.strftime('%d-%m-%Y')} to {end_of_week.strftime('%d-%m-%Y')} ---")
+    
+    # 2. PREVENT DUPLICATE MESSAGES
+    log_convention = "Cumulative Summary: "
+    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
+    already_processed = [log.split(log_convention)[1] for log in logs_today if log and log.startswith(log_convention)]
+    print(f"Students with cumulative summary already sent today: {already_processed}")
+
+    # 3. GET ALL ATTENDANCE DATA FOR THE SEMESTER IN ONE QUERY
+    cumulative_data = frappe.db.sql("""
+        SELECT student, status, COUNT(*) as count
+        FROM `tabStudent Attendance`
+        WHERE date BETWEEN %(start_date)s AND %(end_date)s AND docstatus = 1
+        GROUP BY student, status
+    """, {"start_date": start_of_semester, "end_date": end_of_week}, as_dict=True)
+
+    if not cumulative_data:
+        print("No attendance data found for this semester. Exiting.")
+        return "No attendance data found for the semester."
+
+    # 4. PROCESS DATA INTO A CLEAN LOOKUP DICTIONARY
+    summary = {}
+    for row in cumulative_data:
+        student_id = row.student
+        if student_id not in summary:
+            summary[student_id] = {"Present": 0, "Absent": 0, "On Leave": 0}
+        summary[student_id][row.status] = row.count
+
+    # 5. GET STUDENT DETAILS (GROUP & CONTACT INFO) IN BULK
+    all_students_in_semester = list(summary.keys())
+    student_details = frappe.get_all(
+        "Student",
+        filters={"name": ["in", all_students_in_semester]},
+        fields=["name", "custom_student_id", "custom_father_mobile_number", "student_group"]
+    )
+    student_map = {s.name: s for s in student_details}
+
+    # 6. LOOP THROUGH STUDENTS, FILTER, AND SEND SMS
+    for student_id, attendance in summary.items():
+        if student_id in already_processed:
+            print(f"Skipping {student_id}, already processed.")
+            continue
+
+        student_info = student_map.get(student_id)
+        if not student_info:
+            continue
         
+        try:
+            student_group = student_info.get("student_group")
+            # ***** THE MODIFIED LOGIC IS HERE *****
+            # If the student has no group, or if their group name does not contain ANY of the patterns, skip them.
+            if not student_group or not any(pattern in student_group for pattern in TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES):
+                print(f"Skipping {student_id} from group '{student_group}' - does not match any target pattern.")
+                continue
+
+            mobile_no = student_info.get("custom_father_mobile_number")
+            if not mobile_no:
+                print(f"Warning: No mobile number for student {student_id}. Skipping.")
+                continue
+            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+
+            attended_count = attendance.get("Present", 0)
+            total_classes = sum(attendance.values())
+
+            if total_classes == 0: continue
+            
+            percentage = round((attended_count / total_classes) * 100, 2)
+            
+            # Construct and send the message
+            reg_no = student_info.get("custom_student_id") or student_id
+            date_str = end_of_week.strftime('%d-%m-%Y')
+            message_text = f"Dear Parent, Your ward's ({reg_no}) cumulative attendance this semester is {percentage}% ({attended_count}/{total_classes} classes) as of {date_str}. -Principal, SRKREC"
+
+            print(f"To: {mobile_no}, Message: {message_text}")
+            message_id = send_summary_sms_helper(mobile_no, message_text, CUMULATIVE_ATTENDANCE_SUMMARY_TEMPLATE)
+
+            # Log the action
+            if message_id:
+                frappe.get_doc({
+                    "doctype": "SMS Log",
+                    "sent_on": processing_date,
+                    "message": message_text,
+                    "requested_numbers": mobile_no,
+                    "sent_to": f"{log_convention}{student_id}"
+                }).insert(ignore_permissions=True)
+                frappe.db.commit()
+                print(f"Successfully logged cumulative summary for {student_id}.")
+
+        except Exception as e:
+            print(f"!!! ERROR for student {student_id}: {e}")
+            frappe.log_error(frappe.get_traceback(), f"Cumulative summary failed for {student_id}")
+            frappe.db.rollback()
+            
+    print("--- Cumulative Attendance Summary complete. ---")
+    return "Completed"
+
+# 1. Weekly Attendance Summary Template
+# Template Name (for your reference): Weekly Attendance Summary
+# Template Content:
+# code
+# Code
+# Dear Parent, Your ward ({#var#}) attended {#var#} out of {#var#} classes this week {#var#}. -Principal, SRKREC
+# Explanation of Variables:
+# {#var#} (1st): Will contain the student's registration number (e.g., "22B01A1234").
+# {#var#} (2nd): Will contain the number of classes attended (e.g., "8").
+# {#var#} (3rd): Will contain the total classes conducted (e.g., "10").
+# {#var#} (4th): Will contain the date range string (e.g., "from 18-05 to 23-05").
+    
+
+# 2. Cumulative Attendance Summary Template
+# Template Name (for your reference): Cumulative Semester Attendance
+# Template Content:
+# code
+# Code
+# Dear Parent, Your ward's ({#var#}) cumulative attendance this semester is {#var#}% ({#var#}/{#var#} classes) as of {#var#}. -Principal, SRKREC
+# Explanation of Variables:
+# {#var#} (1st): Will contain the student's registration number (e.g., "22B01A1234").
+# {#var#} (2nd): Will contain the attendance percentage (e.g., "87.52").
+# {#var#} (3rd): Will contain the total classes attended (e.g., "125").
+# {#var#} (4th): Will contain the total classes conducted (e.g., "143").
+# {#var#} (5th): Will contain the "as of" date (e.g., "23-05-2024").
