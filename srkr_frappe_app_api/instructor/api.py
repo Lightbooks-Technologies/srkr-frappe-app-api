@@ -540,8 +540,8 @@ def send_daily_attendance_summary():
 
             
             # if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group or "SEM-05" in student_group)):
-            if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group)):
-                print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-03 criteria.")
+            if not student_group or not ("BTECH" in student_group and ("SEM-01" in student_group)):
+                print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-01 criteria.")
                 continue
             student_doc = frappe.get_doc("Student", student_id)
             mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
