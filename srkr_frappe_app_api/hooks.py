@@ -167,9 +167,9 @@ scheduler_events = {
 	],
     "cron": {
         # This is your existing job that runs at 6:00 PM
-        # "0 18 * * *": [
-        #     "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
-        # ],
+        "0 18 * * *": [
+            "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
+        ],
         "10 17 * * *": [  # Runs at 5:10 PM for instructor reminders
             "srkr_frappe_app_api.instructor.api.send_instructor_attendance_reminders"
         ],
