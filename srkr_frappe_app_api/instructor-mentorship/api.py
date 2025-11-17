@@ -1,28 +1,104 @@
 import frappe
 from frappe.utils import today
 
-# Note: All other imports from your original file were not used,
-# so they have been removed for cleanliness.
 
 @frappe.whitelist()
 def get_mentorship_students(instructor):
     """
     Retrieves a list of all Student Mentorship Profiles assigned to a specific instructor.
+    
+    Includes cumulative attendance percentage for each student based on their 
+    active Student Group and all associated Course Schedules.
     """
     if not instructor:
         return []
 
     try:
-        return frappe.get_all(
+        # --- Step 1: Get the base list of students for the mentor ---
+        student_profiles = frappe.get_all(
             "Student Mentorship Profile",
             filters={"current_mentor": instructor},
             fields=["name", "student", "student_name", "program"],
             order_by="student_name asc"
         )
+        
+        if not student_profiles:
+            return []
+
+        # --- Step 2: Get active Student Groups for all students ---
+        student_ids = [p["student"] for p in student_profiles]
+        
+        # Get active student group mappings
+        student_group_mappings = frappe.get_all(
+            "Student Group Student",
+            filters={
+                "student": ["in", student_ids],
+                "active": 1
+            },
+            fields=["student", "parent"]  # parent is the Student Group name
+        )
+        
+        # Create a map of student -> student_group
+        student_to_group = {sg.student: sg.parent for sg in student_group_mappings}
+        
+        # Get all unique student groups
+        student_groups = list(set(student_to_group.values()))
+        
+        if not student_groups:
+            # No active student groups found
+            for profile in student_profiles:
+                profile["cumulative_attendance"] = None
+            return student_profiles
+
+        # --- Step 3: Get all Course Schedules for these Student Groups ---
+        course_schedules = frappe.get_all(
+            "Course Schedule",
+            filters={"student_group": ["in", student_groups]},
+            pluck="name"
+        )
+        
+        if not course_schedules:
+            # No course schedules found
+            for profile in student_profiles:
+                profile["cumulative_attendance"] = None
+            return student_profiles
+
+        # --- Step 4: Get all attendance records ---
+        attendance_records = frappe.get_all(
+            "Student Attendance",
+            filters={
+                "student": ["in", student_ids],
+                "course_schedule": ["in", course_schedules],
+                "docstatus": 1
+            },
+            fields=["student", "status"]
+        )
+
+        # --- Step 5: Calculate attendance for each student ---
+        attendance_summary = {sid: {"present": 0, "total": 0} for sid in student_ids}
+        
+        for record in attendance_records:
+            if record.student in attendance_summary:
+                attendance_summary[record.student]["total"] += 1
+                if record.status == "Present":
+                    attendance_summary[record.student]["present"] += 1
+        
+        # --- Step 6: Add attendance percentage to each profile ---
+        for profile in student_profiles:
+            student_id = profile["student"]
+            summary = attendance_summary.get(student_id)
+            
+            if summary and summary["total"] > 0:
+                percentage = round((summary["present"] / summary["total"]) * 100, 2)
+                profile["cumulative_attendance"] = percentage
+            else:
+                profile["cumulative_attendance"] = None
+
+        return student_profiles
+
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_mentorship_students API Error")
         return []
-
 @frappe.whitelist()
 def get_mentorship_logs_by_student(student):
     """
