@@ -1,0 +1,233 @@
+# Copyright (c) 2024, Frappe Technologies Pvt. Ltd. and contributors
+# For license information, please see license.txt
+
+import frappe
+from frappe import _
+
+
+def execute(filters=None):
+    """
+    Generate cumulative attendance report for students in a semester
+    Shows total attendance across all classes in the academic year/term
+    """
+    columns = get_columns()
+    data = get_data(filters)
+    
+    return columns, data
+
+
+def get_columns():
+    """Define report columns"""
+    return [
+        {
+            "fieldname": "student",
+            "label": _("Student ID"),
+            "fieldtype": "Link",
+            "options": "Student",
+            "width": 120
+        },
+        {
+            "fieldname": "student_name",
+            "label": _("Student Name"),
+            "fieldtype": "Data",
+            "width": 200
+        },
+        {
+            "fieldname": "custom_student_id",
+            "label": _("Custom Student ID"),
+            "fieldtype": "Data",
+            "width": 150
+        },
+        {
+            "fieldname": "group_roll_number",
+            "label": _("Roll Number"),
+            "fieldtype": "Data",
+            "width": 100
+        },
+        {
+            "fieldname": "classes_attended",
+            "label": _("Classes Attended"),
+            "fieldtype": "Int",
+            "width": 120
+        },
+        {
+            "fieldname": "total_classes",
+            "label": _("Total Classes"),
+            "fieldtype": "Int",
+            "width": 120
+        },
+        {
+            "fieldname": "attendance_percentage",
+            "label": _("Attendance %"),
+            "fieldtype": "Percent",
+            "width": 120
+        }
+    ]
+
+
+def get_data(filters):
+    """Get attendance data for students"""
+    
+    if not filters.get("student_group"):
+        frappe.msgprint(_("Please select a Student Group"))
+        return []
+    
+    student_group = filters.get("student_group")
+    
+    # Step 1: Get student group details to extract academic year and term
+    student_group_doc = frappe.get_doc("Student Group", student_group)
+    academic_year = student_group_doc.academic_year
+    academic_term = student_group_doc.academic_term
+    
+    if not academic_year:
+        frappe.msgprint(_("Student Group does not have an Academic Year assigned"))
+        return []
+    
+    # Step 2: Get all students in the selected group
+    StudentGroupStudent = frappe.qb.DocType("Student Group Student")
+    Student = frappe.qb.DocType("Student")
+    
+    students_query = (
+        frappe.qb.from_(StudentGroupStudent)
+        .left_join(Student)
+        .on(StudentGroupStudent.student == Student.name)
+        .select(
+            StudentGroupStudent.student,
+            StudentGroupStudent.student_name,
+            StudentGroupStudent.group_roll_number,
+            Student.custom_student_id
+        )
+        .where(
+            (StudentGroupStudent.parent == student_group)
+            & (StudentGroupStudent.active == 1)
+        )
+        .orderby(StudentGroupStudent.group_roll_number)
+    )
+    
+    students_list = students_query.run(as_dict=True)
+    
+    if not students_list:
+        frappe.msgprint(_("No active students found in this Student Group"))
+        return []
+    
+    student_ids = [s.student for s in students_list]
+    
+    # Step 3: Find ALL Student Groups with the same academic year and term
+    # This gives us all groups the students might be enrolled in for this semester
+    StudentGroup = frappe.qb.DocType("Student Group")
+    
+    student_groups_query = (
+        frappe.qb.from_(StudentGroup)
+        .select(StudentGroup.name)
+        .where(StudentGroup.academic_year == academic_year)
+    )
+    
+    # Add academic term filter if present
+    if academic_term:
+        student_groups_query = student_groups_query.where(StudentGroup.academic_term == academic_term)
+    
+    semester_student_groups = [sg.name for sg in student_groups_query.run(as_dict=True)]
+    
+    if not semester_student_groups:
+        return format_students_with_zero_attendance(students_list)
+    
+    # Step 4: Get ALL course schedules for those student groups
+    all_schedule_ids = [cs.name for cs in frappe.get_all(
+        "Course Schedule",
+        filters={"student_group": ["in", semester_student_groups]},
+        fields=["name"]
+    )]
+    
+    if not all_schedule_ids:
+        # No schedules found, return students with zero attendance
+        return format_students_with_zero_attendance(students_list)
+    
+    # Step 5: Get attendance records for our students across ALL schedules in the semester
+    StudentAttendance = frappe.qb.DocType("Student Attendance")
+    
+    attendance_query = (
+        frappe.qb.from_(StudentAttendance)
+        .select(
+            StudentAttendance.student,
+            StudentAttendance.course_schedule,
+            StudentAttendance.status
+        )
+        .where(
+            (StudentAttendance.student.isin(student_ids))
+            & (StudentAttendance.course_schedule.isin(all_schedule_ids))
+            & (StudentAttendance.docstatus == 1)
+        )
+    )
+    
+    attendance_records = attendance_query.run(as_dict=True)
+    
+    # Step 6: Process attendance data
+    return process_attendance_data(students_list, attendance_records, all_schedule_ids, student_ids)
+
+
+def process_attendance_data(students_list, attendance_records, all_schedule_ids, student_ids):
+    """Process attendance records and calculate statistics"""
+    
+    # Create a mapping of student to their attendance records
+    student_attendance_map = {}
+    for record in attendance_records:
+        student = record.student
+        if student not in student_attendance_map:
+            student_attendance_map[student] = {
+                'attended': set(),
+                'total': set()
+            }
+        
+        # Add this schedule to total classes for this student
+        student_attendance_map[student]['total'].add(record.course_schedule)
+        
+        # If status is Present, add to attended
+        if record.status == "Present":
+            student_attendance_map[student]['attended'].add(record.course_schedule)
+    
+    # Build result data
+    result = []
+    for student in students_list:
+        student_id = student.student
+        
+        if student_id in student_attendance_map:
+            attended_count = len(student_attendance_map[student_id]['attended'])
+            total_count = len(student_attendance_map[student_id]['total'])
+        else:
+            # Student has no attendance records
+            attended_count = 0
+            total_count = 0
+        
+        # Calculate percentage
+        if total_count > 0:
+            percentage = (attended_count / total_count) * 100
+        else:
+            percentage = 0
+        
+        result.append({
+            'student': student_id,
+            'student_name': student.student_name,
+            'custom_student_id': student.custom_student_id,
+            'group_roll_number': student.group_roll_number,
+            'classes_attended': attended_count,
+            'total_classes': total_count,
+            'attendance_percentage': percentage
+        })
+    
+    return result
+
+
+def format_students_with_zero_attendance(students_list):
+    """Format students with no attendance records"""
+    result = []
+    for student in students_list:
+        result.append({
+            'student': student.student,
+            'student_name': student.student_name,
+            'custom_student_id': student.custom_student_id,
+            'group_roll_number': student.group_roll_number,
+            'classes_attended': 0,
+            'total_classes': 0,
+            'attendance_percentage': 0
+        })
+    return result
