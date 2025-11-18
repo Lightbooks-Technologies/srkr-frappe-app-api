@@ -29,6 +29,10 @@ def get_report_columns():
     ]
 
 def get_report_data(filters):
+    """
+    OPTIMIZED VERSION: Removed correlated subquery and used JOIN instead.
+    The previous version had a subquery that ran for every row, causing massive slowdowns.
+    """
     query = """
         SELECT
             cs.schedule_date as date,
@@ -40,7 +44,7 @@ def get_report_data(filters):
             cs.to_time,
             CASE
                 WHEN COUNT(sa.name) = 0 THEN 'Not Taken'
-                WHEN COUNT(sa.name) < (SELECT COUNT(*) FROM `tabStudent Group Student` sgs WHERE sgs.parent = cs.student_group AND sgs.active = 1) THEN 'Partial'
+                WHEN COUNT(sa.name) < COALESCE(sgs.total_students, 0) THEN 'Partial'
                 ELSE 'Taken'
             END AS status
         FROM
@@ -48,6 +52,12 @@ def get_report_data(filters):
         JOIN `tabCourse` AS c ON cs.course = c.name
         JOIN `tabStudent Group` AS sg ON cs.student_group = sg.name
         LEFT JOIN `tabStudent Attendance` AS sa ON cs.name = sa.course_schedule
+        LEFT JOIN (
+            SELECT parent, COUNT(*) as total_students 
+            FROM `tabStudent Group Student` 
+            WHERE active = 1 
+            GROUP BY parent
+        ) sgs ON cs.student_group = sgs.parent
     """
     conditions = []
     if filters.get("date"): conditions.append("cs.schedule_date = %(date)s")
@@ -55,7 +65,7 @@ def get_report_data(filters):
     if filters.get("instructor"): conditions.append("cs.instructor = %(instructor)s")
     if filters.get("student_group"): conditions.append("cs.student_group = %(student_group)s")
     if conditions: query += " WHERE " + " AND ".join(conditions)
-    query += " GROUP BY cs.name ORDER BY cs.from_time ASC"
+    query += " GROUP BY cs.name, sgs.total_students ORDER BY cs.from_time ASC"
     all_data = frappe.db.sql(query, filters, as_dict=1)
     status_filter = filters.get("status")
     if status_filter and status_filter != "All":
@@ -80,6 +90,7 @@ def send_daily_attendance_report():
         data = get_report_data(filters)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Daily Attendance Report Generation Failed")
+        print(f"ERROR: Report generation failed - {str(e)}")
         return
 
     if not data:
@@ -128,6 +139,7 @@ def send_daily_attendance_report_to_main_admin():
         data = get_report_data(filters)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Daily Attendance Report Generation Failed")
+        print(f"ERROR: Report generation failed - {str(e)}")
         return
 
     if not data:
@@ -151,4 +163,3 @@ def send_daily_attendance_report_to_main_admin():
     
     # THE FINAL FIX: This is now a simple print statement that cannot fail.
     print(f"Daily Attendance Report sent to {', '.join(recipients)}.")
-
