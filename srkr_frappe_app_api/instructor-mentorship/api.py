@@ -7,9 +7,14 @@ def get_mentorship_students(instructor):
     """
     Retrieves a list of all Student Mentorship Profiles assigned to a specific instructor.
     
-    Includes cumulative attendance percentage for each student based on their 
-    active Student Group and all associated Course Schedules.
+    Now includes:
+    - cumulative_attendance: Percentage for each student.
+    - student_group: The student's active group name.
+    - custom_student_id: The student's custom ID.
+    - student_image: The full URL to the student's profile image.
     """
+    from frappe.utils import get_url
+
     if not instructor:
         return []
 
@@ -25,45 +30,60 @@ def get_mentorship_students(instructor):
         if not student_profiles:
             return []
 
-        # --- Step 2: Get active Student Groups for all students ---
         student_ids = [p["student"] for p in student_profiles]
         
-        # Get active student group mappings
+        # --- Step 2: Get Student Group mappings ---
         student_group_mappings = frappe.get_all(
             "Student Group Student",
-            filters={
-                "student": ["in", student_ids],
-                "active": 1
-            },
-            fields=["student", "parent"]  # parent is the Student Group name
+            filters={"student": ["in", student_ids], "active": 1},
+            fields=["student", "parent"]
         )
-        
-        # Create a map of student -> student_group
         student_to_group = {sg.student: sg.parent for sg in student_group_mappings}
         
-        # Get all unique student groups
-        student_groups = list(set(student_to_group.values()))
+        # --- Step 2.5 (CORRECTED): Get Custom IDs and the 'image' field ---
+        student_details = frappe.get_all(
+            "Student",
+            filters={"name": ["in", student_ids]},
+            fields=["name", "custom_student_id", "image"] # <-- CORRECTED FIELD NAME
+        )
         
+        student_to_custom_id = {s.name: s.custom_student_id for s in student_details}
+        
+        # --- THIS IS THE FIX ---
+        # Manually construct the full URL for each image using the correct field name
+        base_url = get_url()
+        student_to_image = {
+            s.name: (base_url + s.image) if s.image else None # <-- CORRECTED FIELD NAME
+            for s in student_details
+        }
+
+        # --- Step 3: Get all Course Schedules ---
+        student_groups = list(set(student_to_group.values()))
         if not student_groups:
-            # No active student groups found
             for profile in student_profiles:
+                student_id = profile["student"]
                 profile["cumulative_attendance"] = None
+                profile["student_group"] = student_to_group.get(student_id)
+                profile["custom_student_id"] = student_to_custom_id.get(student_id)
+                profile["student_image"] = student_to_image.get(student_id)
             return student_profiles
 
-        # --- Step 3: Get all Course Schedules for these Student Groups ---
         course_schedules = frappe.get_all(
             "Course Schedule",
             filters={"student_group": ["in", student_groups]},
             pluck="name"
         )
         
+        # --- Step 4: Get attendance records ---
         if not course_schedules:
-            # No course schedules found
             for profile in student_profiles:
+                student_id = profile["student"]
                 profile["cumulative_attendance"] = None
+                profile["student_group"] = student_to_group.get(student_id)
+                profile["custom_student_id"] = student_to_custom_id.get(student_id)
+                profile["student_image"] = student_to_image.get(student_id)
             return student_profiles
-
-        # --- Step 4: Get all attendance records ---
+            
         attendance_records = frappe.get_all(
             "Student Attendance",
             filters={
@@ -74,31 +94,33 @@ def get_mentorship_students(instructor):
             fields=["student", "status"]
         )
 
-        # --- Step 5: Calculate attendance for each student ---
+        # --- Step 5 & 6: Calculate attendance and assemble final response ---
         attendance_summary = {sid: {"present": 0, "total": 0} for sid in student_ids}
-        
         for record in attendance_records:
             if record.student in attendance_summary:
                 attendance_summary[record.student]["total"] += 1
                 if record.status == "Present":
                     attendance_summary[record.student]["present"] += 1
         
-        # --- Step 6: Add attendance percentage to each profile ---
         for profile in student_profiles:
             student_id = profile["student"]
-            summary = attendance_summary.get(student_id)
             
+            summary = attendance_summary.get(student_id)
             if summary and summary["total"] > 0:
-                percentage = round((summary["present"] / summary["total"]) * 100, 2)
-                profile["cumulative_attendance"] = percentage
+                profile["cumulative_attendance"] = round((summary["present"] / summary["total"]) * 100, 2)
             else:
                 profile["cumulative_attendance"] = None
+
+            profile["student_group"] = student_to_group.get(student_id)
+            profile["custom_student_id"] = student_to_custom_id.get(student_id)
+            profile["student_image"] = student_to_image.get(student_id)
 
         return student_profiles
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_mentorship_students API Error")
         return []
+
 @frappe.whitelist()
 def get_mentorship_logs_by_student(student):
     """
