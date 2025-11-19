@@ -421,6 +421,12 @@ def send_daily_attendance_summary():
     processing_date = today()
     print(f"--- Running Daily Student Attendance Summary for {processing_date} ---")
 
+    # --- CHANGE 1: DEFINE THE EXCLUSION LIST ---
+    # This list contains custom_student_id's that should be temporarily skipped.
+    excluded_student_ids = ["25B91A05K6","25B91A5453","25B91A12G3","25B91A6216","25B91A5479","25B91A07B8", "25B91A0554", "25B91A05K6", "25B91A5453", "25B91A6216", "25B91A0793", "25B91A0796", "25B91A0723", "25B91A07C2", "25B91A0718", "25B91A07C4", "25B91A0455", "25B91A0792", "25B91A0344", "25B91A54E8", "25B91A54B7", "25B91A54G8", "25B91A04G0", "25B91A5470"]
+    print(f"Exclusion list is active for these IDs: {excluded_student_ids}")
+    # ----------------------------------------------
+
     # Use the existing "SMS Log" and filter by the "sent_to" convention
     logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
     already_processed = [log.split(": ")[1] for log in logs_today if log and log.startswith("Student: ")]
@@ -441,20 +447,33 @@ def send_daily_attendance_summary():
             continue
         try:
             print(f"\n--- Processing Student: {student_id} ---")
+
+            # Fetch student document early to get all necessary details
+            student_doc = frappe.get_doc("Student", student_id)
+            mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
+            
+            # --- CHANGE 2: ADD THE EXCLUSION FILTER LOGIC ---
+            # This check runs first. If a student is on the list, the loop continues to the next student.
+            if reg_no in excluded_student_ids:
+                print(f"Skipping student {student_id} ({reg_no}) as they are on the temporary exclusion list.")
+                continue
+            # ----------------------------------------------------
+
+            # Get student group (original logic preserved)
             student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
 
             # --- START: Temporary BTECH Filter ---
             # This condition will be removed after testing is complete.
-
-            
-            # if not student_group or not ("BTECH" in student_group and ("SEM-03" in student_group or "SEM-05" in student_group)):
             if not student_group or not ("BTECH" in student_group and ("SEM-01" in student_group)):
                 print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-01 criteria.")
                 continue
-            student_doc = frappe.get_doc("Student", student_id)
-            mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
-            if not mobile_no: print(f"Warning: No mobile number for student {student_id}. Skipping."); continue
-            if not mobile_no.startswith("91"): mobile_no = "91" + mobile_no
+            
+            # Mobile number check (original logic preserved)
+            if not mobile_no:
+                print(f"Warning: No mobile number for student {student_id}. Skipping.")
+                continue
+            if not mobile_no.startswith("91"):
+                mobile_no = "91" + mobile_no
             
             attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
             total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
