@@ -4,11 +4,25 @@
 import frappe
 from frappe import _
 
+# ====================================================================
+# CONFIGURATION VARIABLES
+# ====================================================================
+
+# Date from which to start calculating attendance for 1st year students
+FIRST_YEAR_ATTENDANCE_START_DATE = "2025-09-20"
+
+# Semester patterns to identify 1st year student groups
+# If a student group name contains any of these patterns, it's considered 1st year
+FIRST_YEAR_SEMESTER_PATTERNS = ["SEM-01", "SEM-02"]
+
+# ====================================================================
+
 
 def execute(filters=None):
     """
     Generate cumulative attendance report for students in a semester
     Shows total attendance across all classes in the academic year/term
+    UPDATED: Filters attendance for 1st year students to only include dates from configured start date onwards.
     """
     columns = get_columns()
     data = get_data(filters)
@@ -65,14 +79,33 @@ def get_columns():
     ]
 
 
+def is_first_year_group(student_group_name):
+    """
+    Check if the student group is a first year group based on configured patterns.
+    """
+    if not student_group_name:
+        return False
+    
+    for pattern in FIRST_YEAR_SEMESTER_PATTERNS:
+        if pattern in student_group_name:
+            return True
+    return False
+
+
 def get_data(filters):
-    """Get attendance data for students"""
+    """
+    Get attendance data for students
+    UPDATED: Filters attendance for 1st year students based on start date.
+    """
     
     if not filters.get("student_group"):
         frappe.msgprint(_("Please select a Student Group"))
         return []
     
     student_group = filters.get("student_group")
+    
+    # Check if this is a first year group
+    is_first_year = is_first_year_group(student_group)
     
     # Step 1: Get student group details to extract academic year and term
     student_group_doc = frappe.get_doc("Student Group", student_group)
@@ -143,6 +176,7 @@ def get_data(filters):
         return format_students_with_zero_attendance(students_list)
     
     # Step 5: Get attendance records for our students across ALL schedules in the semester
+    # UPDATED: Add date filter for first year groups
     StudentAttendance = frappe.qb.DocType("Student Attendance")
     
     attendance_query = (
@@ -150,7 +184,8 @@ def get_data(filters):
         .select(
             StudentAttendance.student,
             StudentAttendance.course_schedule,
-            StudentAttendance.status
+            StudentAttendance.status,
+            StudentAttendance.date
         )
         .where(
             (StudentAttendance.student.isin(student_ids))
@@ -158,6 +193,12 @@ def get_data(filters):
             & (StudentAttendance.docstatus == 1)
         )
     )
+    
+    # Add date filter for first year groups
+    if is_first_year:
+        attendance_query = attendance_query.where(
+            StudentAttendance.date >= FIRST_YEAR_ATTENDANCE_START_DATE
+        )
     
     attendance_records = attendance_query.run(as_dict=True)
     

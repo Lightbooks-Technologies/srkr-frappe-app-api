@@ -4,6 +4,19 @@
 import frappe
 from frappe import _
 
+# ====================================================================
+# CONFIGURATION VARIABLES
+# ====================================================================
+
+# Date from which to start calculating attendance for 1st year students
+FIRST_YEAR_ATTENDANCE_START_DATE = "2025-09-20"
+
+# Semester patterns to identify 1st year student groups
+# If a student group name contains any of these patterns, it's considered 1st year
+FIRST_YEAR_SEMESTER_PATTERNS = ["SEM-01", "SEM-02"]
+
+# ====================================================================
+
 def execute(filters=None):
     if not filters or not filters.get("student_group") or not filters.get("course"):
         return [], []
@@ -16,11 +29,32 @@ def execute(filters=None):
     
     return columns, data
 
+def is_first_year_group(student_group_name):
+    """
+    Check if the student group is a first year group based on configured patterns.
+    """
+    if not student_group_name:
+        return False
+    
+    for pattern in FIRST_YEAR_SEMESTER_PATTERNS:
+        if pattern in student_group_name:
+            return True
+    return False
+
 def get_columns(filters):
     """
     Generate dynamic columns: Student Info, one column for each class date, and summary columns.
+    UPDATED: Filter out dates before the first year start date for first year groups.
     """
-    class_dates = frappe.db.sql("""
+    student_group = filters.get("student_group")
+    is_first_year = is_first_year_group(student_group)
+    
+    # Build the date filter condition
+    date_condition = ""
+    if is_first_year:
+        date_condition = f"AND date >= '{FIRST_YEAR_ATTENDANCE_START_DATE}'"
+    
+    class_dates = frappe.db.sql(f"""
         SELECT DISTINCT date
         FROM `tabStudent Attendance`
         WHERE
@@ -30,6 +64,7 @@ def get_columns(filters):
                 WHERE course = %(course)s
             )
             AND docstatus = 1
+            {date_condition}
         ORDER BY date ASC
     """, filters, as_list=1)
 
@@ -64,10 +99,14 @@ def get_columns(filters):
 def get_data(filters, columns):
     """
     Fetch and pivot the attendance data to match the dynamic columns.
+    UPDATED: Filter out attendance records before the first year start date for first year groups.
     """
+    student_group = filters.get("student_group")
+    is_first_year = is_first_year_group(student_group)
+    
     # Get students from Student Group Student - REMOVE the problematic order_by
     students = frappe.get_all("Student Group Student",
-        filters={"parent": filters.get("student_group"), "active": 1},
+        filters={"parent": student_group, "active": 1},
         fields=["student", "student_name"]
     )
 
@@ -92,8 +131,13 @@ def get_data(filters, columns):
             "custom_student_id": student.custom_student_id or ""
         }
 
+    # Build the date filter condition
+    date_condition = ""
+    if is_first_year:
+        date_condition = f"AND date >= '{FIRST_YEAR_ATTENDANCE_START_DATE}'"
+
     # Get attendance records
-    attendance_records = frappe.db.sql("""
+    attendance_records = frappe.db.sql(f"""
         SELECT student, date, status
         FROM `tabStudent Attendance`
         WHERE
@@ -104,6 +148,7 @@ def get_data(filters, columns):
                 WHERE course = %(course)s
             )
             AND docstatus = 1
+            {date_condition}
     """, {"student_ids": student_ids, **filters}, as_dict=1)
 
     # Create pivoted attendance data
