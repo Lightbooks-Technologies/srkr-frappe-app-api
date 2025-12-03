@@ -26,6 +26,11 @@ ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
     'SEM-01'
 ]
 
+# NOTE: For Daily Attendance Summary, only send SMS to students in groups matching ALL these patterns.
+# Example: ["BTECH", "SEM-01"] means the group name must contain BOTH "BTECH" and "SEM-01".
+# Leave empty to disable filtering (send to all).
+DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01"]
+
 # NOTE: Get these Template IDs from your SMS provider.
 WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399999' # Replace with actual ID
 CUMULATIVE_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399888' # Replace with actual ID
@@ -462,11 +467,24 @@ def send_daily_attendance_summary():
             # Get student group (original logic preserved)
             student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
 
-            # --- START: Temporary BTECH Filter ---
-            # This condition will be removed after testing is complete.
-            if not student_group or not ("BTECH" in student_group and ("SEM-01" in student_group)):
-                print(f"Skipping student {student_id} from group '{student_group}' as it does not match BTECH SEM-01 criteria.")
+            # --- START: Configurable Filter ---
+            # Check if student_group matches the configured criteria in DAILY_SUMMARY_REQUIRED_PATTERNS
+            # All patterns in DAILY_SUMMARY_REQUIRED_PATTERNS must be present in student_group
+            if not student_group:
+                print(f"Skipping student {student_id} as student_group is missing.")
                 continue
+
+            if DAILY_SUMMARY_REQUIRED_PATTERNS:
+                matches_criteria = True
+                for pattern in DAILY_SUMMARY_REQUIRED_PATTERNS:
+                    if pattern not in student_group:
+                        matches_criteria = False
+                        break
+                
+                if not matches_criteria:
+                    print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {DAILY_SUMMARY_REQUIRED_PATTERNS}.")
+                    continue
+            # --- END: Configurable Filter ---
             
             # Mobile number check (original logic preserved)
             if not mobile_no:
