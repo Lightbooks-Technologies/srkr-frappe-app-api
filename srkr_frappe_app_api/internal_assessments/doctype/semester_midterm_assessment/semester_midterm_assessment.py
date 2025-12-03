@@ -28,13 +28,18 @@ class SemesterMidtermAssessment(Document):
                     student_totals[student]["mid_2_total"] += marks
         for summary_row in self.final_scores_summary:
             totals = student_totals.get(summary_row.student)
-            if totals:
+            
+            # If Manual Entry Mode is OFF, overwrite the totals with the calculated sum.
+            # If it is ON, we preserve whatever the user typed in the grid.
+            if not self.manual_entry_mode and totals:
                 summary_row.mid_1_total = totals["mid_1_total"]
                 summary_row.mid_2_total = totals["mid_2_total"]
-                mid1, mid2 = (summary_row.mid_1_total or 0), (summary_row.mid_2_total or 0)
-                higher_score, lower_score = max(mid1, mid2), min(mid1, mid2)
-                final_marks = round((0.8 * higher_score) + (0.2 * lower_score))
-                summary_row.total_internal_marks = final_marks
+
+            # Always calculate the final weightage based on whatever is in the columns now.
+            mid1, mid2 = (summary_row.mid_1_total or 0), (summary_row.mid_2_total or 0)
+            higher_score, lower_score = max(mid1, mid2), min(mid1, mid2)
+            final_marks = round((0.8 * higher_score) + (0.2 * lower_score))
+            summary_row.total_internal_marks = final_marks
 
 # --- WHITELISTED FUNCTIONS ---
 
