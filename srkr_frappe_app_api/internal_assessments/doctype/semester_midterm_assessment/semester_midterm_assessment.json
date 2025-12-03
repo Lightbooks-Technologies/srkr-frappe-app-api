@@ -1,174 +1,180 @@
 {
- "actions": [],
- "allow_rename": 1,
- "autoname": "format:SMA-{academic_year}-{course}-{student_group}",
- "creation": "2024-07-18 11:00:00.000000",
- "doctype": "DocType",
- "engine": "InnoDB",
- "field_order": [
-  "section_break_1",
-  "academic_year",
-  "academic_term",
-  "column_break_1",
-  "student_group",
-  "course",
-  "instructor",
-  "regulation",
-  "status",
-  "assessment_structure_section",
-  "assessment_structure",
-  "student_marks_data_section",
-  "student_marks_data",
-  "final_scores_summary_section",
-  "final_scores_summary"
- ],
- "fields": [
-  {
-   "fieldname": "section_break_1",
-   "fieldtype": "Section Break",
-   "label": "Assessment Details"
-  },
-  {
-   "fieldname": "academic_year",
-   "fieldtype": "Link",
-   "label": "Academic Year",
-   "options": "Academic Year",
-   "reqd": 1
-  },
-  {
-   "fieldname": "academic_term",
-   "fieldtype": "Link",
-   "label": "Academic Term",
-   "options": "Academic Term",
-   "reqd": 1
-  },
-  {
-   "fieldname": "column_break_1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "student_group",
-   "fieldtype": "Link",
-   "label": "Student Group",
-   "options": "Student Group",
-   "reqd": 1,
-   "in_list_view": 1
-  },
-  {
-   "fieldname": "course",
-   "fieldtype": "Link",
-   "label": "Course",
-   "options": "Course",
-   "reqd": 1,
-   "in_list_view": 1
-  },
-  {
-   "fieldname": "instructor",
-   "fieldtype": "Link",
-   "label": "Instructor",
-   "options": "Instructor"
-  },
-  {
-    "fieldname": "regulation",
-    "fieldtype": "Link",
-    "label": "Regulation",
-    "options": "Regulation",
-    "reqd": 1,
-    "in_list_view": 1
-  },
-  {
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "label": "Status",
-   "options": "Draft\nIn Review\nApproved",
-   "default": "Draft"
-  },
-  {
-   "fieldname": "assessment_structure_section",
-   "fieldtype": "Section Break",
-   "label": "Assessment Structure"
-  },
-  {
-   "fieldname": "assessment_structure",
-   "fieldtype": "Table",
-   "label": "Assessment Structure",
-   "options": "Assessment Structure"
-  },
-  {
-   "fieldname": "student_marks_data_section",
-   "fieldtype": "Section Break",
-   "label": "Student Marks Data",
-   "depends_on": "eval:false"
-  },
-  {
-   "fieldname": "student_marks_data",
-   "fieldtype": "Table",
-   "label": "Student Marks Data",
-   "options": "Student Marks Data",
-   "description": "Hidden table for storing raw imported data. Not for direct user interaction."
-  },
-  {
-   "fieldname": "final_scores_summary_section",
-   "fieldtype": "Section Break",
-   "label": "Final Scores Summary"
-  },
-  {
-   "fieldname": "final_scores_summary",
-   "fieldtype": "Table",
-   "label": "Final Scores Summary",
-   "options": "Final Scores Summary",
-   "description": "Read-only, auto-calculated summary for faculty."
-  }
- ],
- "index_web_pages_for_search": 0,
- "is_submittable": 0,
- "links": [],
- "modified": "2024-07-18 15:00:00.000000",
- "modified_by": "Administrator",
- "module": "Internal Assessments",
- "name": "Semester Midterm Assessment",
- "naming_rule": "Expression",
- "owner": "Administrator",
- "permissions": [
-  {
-   "create": 1,
-   "delete": 1,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "System Manager",
-   "share": 1,
-   "write": 1
-  },
-  {
-   "create": 1,
-   "delete": 0,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "Academic User",
-   "share": 1,
-   "write": 1
-  },
-  {
-   "create": 0,
-   "delete": 0,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 0,
-   "role": "Instructor",
-   "share": 0,
-   "write": 1
-  }
- ],
- "sort_field": "modified",
- "sort_order": "DESC",
- "states": [],
- "title_field": "student_group"
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "format:SMA-{academic_year}-{course}-{student_group}",
+  "creation": "2024-07-18 11:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "section_break_1",
+    "academic_year",
+    "academic_term",
+    "column_break_1",
+    "student_group",
+    "course",
+    "instructor",
+    "regulation",
+    "status",
+    "assessment_structure_section",
+    "assessment_structure",
+    "student_marks_data_section",
+    "student_marks_data",
+    "final_scores_summary_section",
+    "final_scores_summary"
+  ],
+  "fields": [
+    {
+      "fieldname": "section_break_1",
+      "fieldtype": "Section Break",
+      "label": "Assessment Details"
+    },
+    {
+      "fieldname": "academic_year",
+      "fieldtype": "Link",
+      "label": "Academic Year",
+      "options": "Academic Year",
+      "reqd": 1
+    },
+    {
+      "fieldname": "academic_term",
+      "fieldtype": "Link",
+      "label": "Academic Term",
+      "options": "Academic Term",
+      "reqd": 1
+    },
+    {
+      "fieldname": "column_break_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "student_group",
+      "fieldtype": "Link",
+      "label": "Student Group",
+      "options": "Student Group",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "course",
+      "fieldtype": "Link",
+      "label": "Course",
+      "options": "Course",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "instructor",
+      "fieldtype": "Link",
+      "label": "Instructor",
+      "options": "Instructor"
+    },
+    {
+      "fieldname": "regulation",
+      "fieldtype": "Link",
+      "label": "Regulation",
+      "options": "Regulation",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Draft\nIn Review\nApproved",
+      "default": "Draft"
+    },
+    {
+      "fieldname": "manual_entry_mode",
+      "fieldtype": "Check",
+      "label": "Manual Entry Mode",
+      "description": "If checked, you can manually enter Midterm totals. If unchecked, totals are calculated from the question breakdown."
+    },
+    {
+      "fieldname": "assessment_structure_section",
+      "fieldtype": "Section Break",
+      "label": "Assessment Structure"
+    },
+    {
+      "fieldname": "assessment_structure",
+      "fieldtype": "Table",
+      "label": "Assessment Structure",
+      "options": "Assessment Structure"
+    },
+    {
+      "fieldname": "student_marks_data_section",
+      "fieldtype": "Section Break",
+      "label": "Student Marks Data",
+      "depends_on": "eval:false"
+    },
+    {
+      "fieldname": "student_marks_data",
+      "fieldtype": "Table",
+      "label": "Student Marks Data",
+      "options": "Student Marks Data",
+      "description": "Hidden table for storing raw imported data. Not for direct user interaction."
+    },
+    {
+      "fieldname": "final_scores_summary_section",
+      "fieldtype": "Section Break",
+      "label": "Final Scores Summary"
+    },
+    {
+      "fieldname": "final_scores_summary",
+      "fieldtype": "Table",
+      "label": "Final Scores Summary",
+      "options": "Final Scores Summary",
+      "description": "Read-only, auto-calculated summary for faculty."
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "is_submittable": 0,
+  "links": [],
+  "modified": "2024-07-18 15:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Internal Assessments",
+  "name": "Semester Midterm Assessment",
+  "naming_rule": "Expression",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 0,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Academic User",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 0,
+      "delete": 0,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 0,
+      "role": "Instructor",
+      "share": 0,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "title_field": "student_group"
 }

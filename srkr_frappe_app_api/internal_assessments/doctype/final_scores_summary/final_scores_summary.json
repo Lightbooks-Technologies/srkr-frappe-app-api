@@ -1,74 +1,72 @@
 {
- "actions": [],
- "allow_rename": 0,
- "autoname": "hash",
- "creation": "2024-07-18 10:10:00.000000",
- "doctype": "DocType",
- "engine": "InnoDB",
- "field_order": [
-  "student",
-  "student_name",
-  "customer_student_id",
-  "mid_1_total",
-  "mid_2_total",
-  "total_internal_marks"
- ],
- "fields": [
-  {
-   "fieldname": "student",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Student",
-   "options": "Student",
-   "read_only": 1
-  },
-  {
-   "fieldname": "student_name",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Student Name",
-   "read_only": 1
-  },
-  {
-   "fieldname": "customer_student_id",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Register Number",
-   "read_only": 1
-  },
-  {
-   "fieldname": "mid_1_total",
-   "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Mid-1 Total",
-   "read_only": 1
-  },
-  {
-   "fieldname": "mid_2_total",
-   "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Mid-2 Total",
-   "read_only": 1
-  },
-  {
-   "fieldname": "total_internal_marks",
-   "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Total Internal Marks",
-   "read_only": 1,
-   "bold": 1
-  }
- ],
- "index_web_pages_for_search": 0,
- "istable": 1,
- "links": [],
- "modified": "2024-07-18 10:10:00.000000",
- "modified_by": "Administrator",
- "module": "Internal Assessments",
- "name": "Final Scores Summary",
- "owner": "Administrator",
- "permissions": [],
- "sort_field": "creation",
- "sort_order": "DESC",
- "states": []
+    "actions": [],
+    "allow_rename": 0,
+    "autoname": "hash",
+    "creation": "2024-07-18 10:10:00.000000",
+    "doctype": "DocType",
+    "engine": "InnoDB",
+    "field_order": [
+        "student",
+        "student_name",
+        "customer_student_id",
+        "mid_1_total",
+        "mid_2_total",
+        "total_internal_marks"
+    ],
+    "fields": [
+        {
+            "fieldname": "student",
+            "fieldtype": "Link",
+            "in_list_view": 1,
+            "label": "Student",
+            "options": "Student",
+            "read_only": 1
+        },
+        {
+            "fieldname": "student_name",
+            "fieldtype": "Data",
+            "in_list_view": 1,
+            "label": "Student Name",
+            "read_only": 1
+        },
+        {
+            "fieldname": "customer_student_id",
+            "fieldtype": "Data",
+            "in_list_view": 1,
+            "label": "Register Number",
+            "read_only": 1
+        },
+        {
+            "fieldname": "mid_1_total",
+            "fieldtype": "Float",
+            "in_list_view": 1,
+            "label": "Mid-1 Total"
+        },
+        {
+            "fieldname": "mid_2_total",
+            "fieldtype": "Float",
+            "in_list_view": 1,
+            "label": "Mid-2 Total"
+        },
+        {
+            "fieldname": "total_internal_marks",
+            "fieldtype": "Float",
+            "in_list_view": 1,
+            "label": "Total Internal Marks",
+            "read_only": 1,
+            "bold": 1
+        }
+    ],
+    "index_web_pages_for_search": 0,
+    "istable": 1,
+    "links": [],
+    "modified": "2024-07-18 10:10:00.000000",
+    "modified_by": "Administrator",
+    "module": "Internal Assessments",
+    "name": "Final Scores Summary",
+    "owner": "Administrator",
+    "permissions": [],
+    "sort_field": "creation",
+    "sort_order": "DESC",
+    "states": []
 }
