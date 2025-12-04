@@ -70,6 +70,22 @@ frappe.ui.form.on('Semester Midterm Assessment', {
                     assessment: frm.doc.name
                 });
             });
+
+            // Button to explicitly trigger recalculation
+            frm.add_custom_button(__('Recalculate Scores'), function () {
+                frappe.call({
+                    method: 'srkr_frappe_app_api.internal_assessments.doctype.semester_midterm_assessment.semester_midterm_assessment.trigger_recalculation',
+                    args: { docname: frm.doc.name },
+                    freeze: true,
+                    freeze_message: __('Recalculating Scores...'),
+                    callback: function (r) {
+                        if (!r.exc) {
+                            frappe.show_alert({ message: __('Scores Recalculated Successfully'), indicator: 'green' });
+                            frm.reload_doc();
+                        }
+                    }
+                });
+            });
         }
 
         // --- UI Polish ---

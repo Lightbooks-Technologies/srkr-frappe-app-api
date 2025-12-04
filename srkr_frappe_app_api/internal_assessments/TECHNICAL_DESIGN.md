@@ -89,3 +89,33 @@ The module relies on Excel for bulk data entry of granular marks.
 *   `get_default_assessment_structure()`: Returns the hardcoded list of default questions.
 *   `recalculate_scores(self)`: The main logic engine. Contains the conditional logic for Manual vs. Automatic calculation.
 *   `upload_marksheet(file_url, docname)`: Handles the parsing of the Excel file and data mapping.
+
+---
+
+## Testing Scenarios & FAQ
+
+### 1. Data Preservation (Manual vs. Standard)
+**Q: If I have granular data, then enable Manual Mode and override a student's total, what happens to the granular data?**
+*   **Answer**: The granular data (individual question marks) remains **unchanged** in the database. It is simply ignored for the calculation while Manual Mode is active.
+*   **Implication**: If you later turn Manual Mode **OFF**, the system will revert to calculating the total from those preserved granular marks, effectively "undoing" your manual override.
+
+### 2. Bulk Upload Behavior
+*   **Scenario A: Standard Upload**
+    *   **Action**: Upload a sheet with question columns (Manual Mode OFF).
+    *   **Result**: The system **clears** all previous granular data and replaces it with the new upload. Totals are recalculated from these new marks.
+*   **Scenario B: Manual Upload**
+    *   **Action**: Upload a sheet with "Mid-1 Total" and "Mid-2 Total" columns (Manual Mode ON).
+    *   **Result**: The system updates the totals in the summary table. Crucially, it **preserves** any existing granular data in the background.
+
+### 3. Template Generation
+*   **Rule**: To get the correct Excel template, you must set the toggle **before** clicking "Generate Marksheet Template".
+    *   **Manual Mode ON** -> Downloads sheet with Total columns.
+    *   **Manual Mode OFF** -> Downloads sheet with Question columns.
+
+### 4. Recalculate Scores Button
+*   **Purpose**: To provide an explicit, manual trigger for the calculation logic.
+*   **Behavior**:
+    *   Clicking this button forces the system to run `recalculate_scores()` immediately.
+    *   For this to work we have to save the doc first and make sure it in draft state.
+    *   It respects the current state of the `manual_entry_mode` toggle.
+    *   Useful if you suspect the totals are out of sync or if you want to force a refresh after toggling modes without editing any fields.
