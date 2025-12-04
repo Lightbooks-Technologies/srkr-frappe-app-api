@@ -95,7 +95,15 @@ def generate_marksheet_template(docname):
     sheet = workbook.active
     sheet.title = "Marksheet"
     headers = ["Register Number", "Student Name"]
-    descriptive_headers = [f"{row.midterm}-{row.assessment_type}-{row.question_id}" for row in doc.assessment_structure]
+    
+    # Dynamic Template Generation
+    if doc.manual_entry_mode:
+        # In Manual Mode, we only need the totals.
+        descriptive_headers = ["Mid-1 Total", "Mid-2 Total"]
+    else:
+        # In Standard Mode, we need the full breakdown.
+        descriptive_headers = [f"{row.midterm}-{row.assessment_type}-{row.question_id}" for row in doc.assessment_structure]
+    
     headers.extend(descriptive_headers)
     sheet.append(headers)
     for student_row in doc.final_scores_summary:
@@ -141,8 +149,10 @@ def upload_marksheet(file_url, docname):
     student_map = {row.customer_student_id: row.student for row in doc.final_scores_summary}
     structure_map = {f"{row.midterm}-{row.assessment_type}-{row.question_id}": row.name for row in doc.assessment_structure}
     
-    # Clear any old data before importing the new marks.
-    doc.student_marks_data = []
+    # Clear any old data before importing the new marks, BUT ONLY IF IN STANDARD MODE.
+    # In Manual Mode, we want to preserve the underlying granular data.
+    if not doc.manual_entry_mode:
+        doc.student_marks_data = []
     
     # Loop through the Excel rows, starting from the second row (to skip the header).
     for row_index in range(2, sheet.max_row + 1):
@@ -160,16 +170,29 @@ def upload_marksheet(file_url, docname):
             descriptive_header_from_excel = header[col_index - 1]
             marks = sheet.cell(row=row_index, column=col_index).value
             
-            # Look up the internal name of the assessment item using the descriptive header.
-            assessment_item_docname = structure_map.get(descriptive_header_from_excel)
+            # --- MANUAL ENTRY MODE LOGIC ---
+            if doc.manual_entry_mode:
+                # In Manual Mode, we expect headers "Mid-1 Total" and "Mid-2 Total"
+                # We update the summary table directly.
+                summary_row = next((r for r in doc.final_scores_summary if r.customer_student_id == str(register_number).strip()), None)
+                if summary_row:
+                    if descriptive_header_from_excel == "Mid-1 Total":
+                        summary_row.mid_1_total = marks if marks is not None else 0
+                    elif descriptive_header_from_excel == "Mid-2 Total":
+                        summary_row.mid_2_total = marks if marks is not None else 0
             
-            if assessment_item_docname:
-                # Add a new row to the hidden "Student Marks Data" table.
-                doc.append("student_marks_data", {
-                    "student": student_docname,
-                    "assessment_item": assessment_item_docname,
-                    "marks_obtained": marks if marks is not None else 0
-                })
+            # --- STANDARD MODE LOGIC ---
+            else:
+                # Look up the internal name of the assessment item using the descriptive header.
+                assessment_item_docname = structure_map.get(descriptive_header_from_excel)
+                
+                if assessment_item_docname:
+                    # Add a new row to the hidden "Student Marks Data" table.
+                    doc.append("student_marks_data", {
+                        "student": student_docname,
+                        "assessment_item": assessment_item_docname,
+                        "marks_obtained": marks if marks is not None else 0
+                    })
     
     # Save the document. This will trigger the `before_save` hook, which runs the
     # `recalculate_scores` function to update the final summary table.
@@ -177,3 +200,10 @@ def upload_marksheet(file_url, docname):
     frappe.db.commit()
     
     return doc
+
+@frappe.whitelist()
+def trigger_recalculation(docname):
+    doc = frappe.get_doc("Semester Midterm Assessment", docname)
+    doc.recalculate_scores()
+    doc.save()
+    return "Recalculation Complete"
