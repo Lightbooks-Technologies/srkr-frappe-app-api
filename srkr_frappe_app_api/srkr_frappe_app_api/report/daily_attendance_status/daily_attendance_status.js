@@ -2,7 +2,7 @@
 // For license information, please see license.txt
 
 frappe.query_reports["Daily Attendance Status"] = {
-	"filters": [
+    "filters": [
         {
             "fieldname": "date",
             "label": __("Date"),
@@ -34,10 +34,24 @@ frappe.query_reports["Daily Attendance Status"] = {
             "fieldtype": "Select",
             // Added "Partial" to the options
             "options": "All\nTaken\nPartial\nNot Taken"
+        },
+        {
+            "fieldname": "gender",
+            "label": __("Gender"),
+            "fieldtype": "Link",
+            "options": "Gender",
+            "reqd": 0
+        },
+        {
+            "fieldname": "hostel_opt_in",
+            "label": __("Hostel Opt-in"),
+            "fieldtype": "Select",
+            "options": ["", "Yes", "No"],
+            "reqd": 0
         }
-	],
+    ],
     // NEW: Add a formatter for color-coding the status
-    "formatter": function(value, row, column, data, default_formatter) {
+    "formatter": function (value, row, column, data, default_formatter) {
         const formatted_value = default_formatter(value, row, column, data);
 
         if (column.fieldname === 'status') {
@@ -49,7 +63,7 @@ frappe.query_reports["Daily Attendance Status"] = {
                 return `<span style="color: green; font-weight: bold;">${formatted_value}</span>`;
             }
         }
-        
+
         return formatted_value;
     }
 };

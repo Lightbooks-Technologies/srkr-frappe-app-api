@@ -32,8 +32,22 @@ def get_report_data(filters):
     """
     OPTIMIZED VERSION: Removed correlated subquery and used JOIN instead.
     The previous version had a subquery that ran for every row, causing massive slowdowns.
+    UPDATED: Added support for filtering students by gender and hostel opt-in.
     """
-    query = """
+    
+    # Prepare student filter conditions
+    student_conditions = []
+    if filters.get("gender"):
+        student_conditions.append(f"s.gender = '{filters.get('gender')}'")
+    
+    if filters.get("hostel_opt_in"):
+        val = 1 if filters.get("hostel_opt_in") == "Yes" else 0
+        student_conditions.append(f"s.custom_hostel_required = {val}")
+    
+    student_where = " AND ".join(student_conditions) if student_conditions else "1=1"
+    sa_student_where = student_where.replace("s.", "sa_s.")
+
+    query = f"""
         SELECT
             cs.schedule_date as date,
             sg.program,
@@ -43,8 +57,8 @@ def get_report_data(filters):
             cs.from_time,
             cs.to_time,
             CASE
-                WHEN COUNT(sa.name) = 0 THEN 'Not Taken'
-                WHEN COUNT(sa.name) < COALESCE(sgs.total_students, 0) THEN 'Partial'
+                WHEN COUNT(CASE WHEN {{sa_student_where}} THEN sa.name END) = 0 THEN 'Not Taken'
+                WHEN COUNT(CASE WHEN {{sa_student_where}} THEN sa.name END) < COALESCE(sgs.total_students, 0) THEN 'Partial'
                 ELSE 'Taken'
             END AS status
         FROM
@@ -52,13 +66,20 @@ def get_report_data(filters):
         JOIN `tabCourse` AS c ON cs.course = c.name
         JOIN `tabStudent Group` AS sg ON cs.student_group = sg.name
         LEFT JOIN `tabStudent Attendance` AS sa ON cs.name = sa.course_schedule
+        LEFT JOIN `tabStudent` AS sa_s ON sa.student = sa_s.name
         LEFT JOIN (
-            SELECT parent, COUNT(*) as total_students 
-            FROM `tabStudent Group Student` 
-            WHERE active = 1 
-            GROUP BY parent
+            SELECT sgs.parent, COUNT(sgs.name) as total_students 
+            FROM `tabStudent Group Student` sgs
+            JOIN `tabStudent` s ON sgs.student = s.name
+            WHERE sgs.active = 1 
+            AND {{student_where}}
+            GROUP BY sgs.parent
         ) sgs ON cs.student_group = sgs.parent
     """
+    
+    # Format the query with the conditions
+    query = query.format(student_where=student_where, sa_student_where=sa_student_where)
+
     conditions = []
     if filters.get("date"): conditions.append("cs.schedule_date = %(date)s")
     if filters.get("program"): conditions.append("sg.program = %(program)s")

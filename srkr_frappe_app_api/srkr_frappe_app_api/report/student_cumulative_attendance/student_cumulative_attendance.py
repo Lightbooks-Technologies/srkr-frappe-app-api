@@ -103,6 +103,8 @@ def get_data(filters):
         return []
     
     student_group = filters.get("student_group")
+    gender = filters.get("gender")
+    hostel_opt_in = filters.get("hostel_opt_in")
     
     # Check if this is a first year group
     is_first_year = is_first_year_group(student_group)
@@ -134,8 +136,18 @@ def get_data(filters):
             (StudentGroupStudent.parent == student_group)
             & (StudentGroupStudent.active == 1)
         )
-        .orderby(StudentGroupStudent.group_roll_number)
     )
+
+    if gender:
+        students_query = students_query.where(Student.gender == gender)
+    
+    if hostel_opt_in:
+        if hostel_opt_in == "Yes":
+           students_query = students_query.where(Student.custom_hostel_required == 1)
+        elif hostel_opt_in == "No":
+           students_query = students_query.where(Student.custom_hostel_required == 0)
+
+    students_query = students_query.orderby(StudentGroupStudent.group_roll_number)
     
     students_list = students_query.run(as_dict=True)
     

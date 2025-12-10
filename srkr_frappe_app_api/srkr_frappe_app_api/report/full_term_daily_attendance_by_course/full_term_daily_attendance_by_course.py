@@ -102,6 +102,8 @@ def get_data(filters, columns):
     UPDATED: Filter out attendance records before the first year start date for first year groups.
     """
     student_group = filters.get("student_group")
+    gender = filters.get("gender")
+    hostel_opt_in = filters.get("hostel_opt_in")
     is_first_year = is_first_year_group(student_group)
     
     # Get students from Student Group Student - REMOVE the problematic order_by
@@ -116,9 +118,20 @@ def get_data(filters, columns):
     # Get student IDs for further queries
     student_ids = [s.student for s in students]
     
+    # Prepare student filters
+    student_filters = {"name": ("in", student_ids)}
+    if gender:
+        student_filters["gender"] = gender
+    
+    if hostel_opt_in:
+        if hostel_opt_in == "Yes":
+            student_filters["custom_hostel_required"] = 1
+        elif hostel_opt_in == "No":
+            student_filters["custom_hostel_required"] = 0
+
     # Get student details including custom_student_id from Student doctype
     student_details = frappe.get_all("Student",
-        filters={"name": ("in", student_ids)},
+        filters=student_filters,
         fields=["name", "student_name", "custom_student_id"],
         order_by="custom_student_id ASC"  # Order by custom_student_id here instead
     )
