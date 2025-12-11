@@ -1,0 +1,71 @@
+{
+    "actions": [],
+    "allow_rename": 1,
+    "autoname": "field:entry_title",
+    "creation": "2024-05-22 16:35:46.123456",
+    "default_view": "List",
+    "doctype": "DocType",
+    "editable_grid": 1,
+    "engine": "InnoDB",
+    "field_order": [
+        "sync_date",
+        "run_sync_now",
+        "section_break_logs",
+        "latest_log_link",
+        "status_html"
+    ],
+    "fields": [
+        {
+            "fieldname": "sync_date",
+            "fieldtype": "Date",
+            "kv_store": 1,
+            "label": "Date to Sync",
+            "reqd": 1,
+            "default": "Today"
+        },
+        {
+            "fieldname": "run_sync_now",
+            "fieldtype": "Button",
+            "label": "Run Sync Now"
+        },
+        {
+            "fieldname": "section_break_logs",
+            "fieldtype": "Section Break",
+            "label": "Logs & Status"
+        },
+        {
+            "fieldname": "latest_log_link",
+            "fieldtype": "Link",
+            "label": "Latest Sync Log",
+            "options": "External Attendance Sync Log",
+            "read_only": 1
+        },
+        {
+            "fieldname": "status_html",
+            "fieldtype": "HTML",
+            "label": "Status"
+        }
+    ],
+    "issingle": 1,
+    "links": [],
+    "modified": "2024-05-22 16:45:00.000000",
+    "modified_by": "Administrator",
+    "module": "srkr_frappe_app_api",
+    "name": "Manual Attendance Sync",
+    "owner": "Administrator",
+    "permissions": [
+        {
+            "create": 1,
+            "delete": 1,
+            "email": 1,
+            "print": 1,
+            "read": 1,
+            "role": "System Manager",
+            "share": 1,
+            "write": 1
+        }
+    ],
+    "sort_field": "modified",
+    "sort_order": "DESC",
+    "states": []
+}
