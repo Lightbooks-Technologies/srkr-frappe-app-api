@@ -717,7 +717,9 @@ def sync_external_attendance(sync_date=None, local_file_path=None):
             afternoon_schedules = [s for s in student_schedules if _to_time_obj(s.from_time) >= one_pm]
 
             for session_schedules, session_name in [(morning_schedules, "morning"), (afternoon_schedules, "afternoon")]:
-                status = str(student_data.get(session_name, {}).get("attendance", "")).title()
+                # Handle case where API returns explicit null/None for session data
+                session_data = student_data.get(session_name) or {}
+                status = str(session_data.get("attendance", "")).title()
                 if status in ["Present", "Absent"]:
                     for schedule in session_schedules:
                         desired_state[(frappe_student_name, schedule.course_schedule_id)] = {
@@ -806,8 +808,40 @@ def sync_external_attendance(sync_date=None, local_file_path=None):
         
         # --- 7. Perform bulk INSERT (CRITICAL: Bulk operation with duplicate prevention) ---
         if docs_to_insert:
-            fields = ["student", "student_name", "status", "course_schedule", "student_group", "date", "docstatus"]
-            values = [[doc[field] for field in fields] for doc in docs_to_insert]
+            # We must generate the 'name' (PK) manually for bulk insert, and standard audit fields.
+            current_user = frappe.session.user
+            now_str = now_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')
+            
+            # We must generate the 'name' (PK) manually for bulk insert, and standard audit fields.
+            current_user = frappe.session.user
+            now_str = now_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')
+            
+            # --- NAMING STRATEGY ---
+            # To ensure the naming is EXACTLY what Frappe would do (including all hooks, defaults, 
+            # and current configurations), we create a temporary document object and let it 
+            # calculate its own name. This bypasses any need to guess or reverse-engineer logic.
+            
+            for doc_dict in docs_to_insert:
+                # 1. Create a transient object (not saved to DB)
+                temp_doc = frappe.get_doc(doc_dict)
+                
+                # 2. Trigger the standard naming logic
+                # This calls set_new_name(), applies 'naming_series', runs 'autoname' hooks, etc.
+                if not temp_doc.name:
+                    temp_doc.set_new_name()
+                
+                # 3. Apply the generated values back to our bulk-insert dict
+                doc_dict['name'] = temp_doc.name
+                doc_dict['naming_series'] = temp_doc.naming_series
+
+                # 4. Standard audit fields
+                doc_dict['creation'] = now_str
+                doc_dict['modified'] = now_str
+                doc_dict['owner'] = current_user
+                doc_dict['modified_by'] = current_user
+
+            fields = ["name", "naming_series", "student", "student_name", "status", "course_schedule", "student_group", "date", "docstatus", "creation", "modified", "owner", "modified_by"]
+            values = [[doc.get(field) for field in fields] for doc in docs_to_insert]
             
             try:
                 # Try Frappe's bulk_insert first
@@ -815,12 +849,13 @@ def sync_external_attendance(sync_date=None, local_file_path=None):
             except Exception as e:
                 # Fallback to direct SQL with duplicate prevention
                 # CRITICAL: Use INSERT IGNORE to prevent duplicates
-                placeholders = ", ".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(values))
+                # Note: placeholders count must match len(fields)
+                placeholders = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"] * len(values))
                 flat_values = [item for sublist in values for item in sublist]
                 
                 sql = f"""
                     INSERT IGNORE INTO `tabStudent Attendance` 
-                    (`student`, `student_name`, `status`, `course_schedule`, `student_group`, `date`, `docstatus`)
+                    (`name`, `naming_series`, `student`, `student_name`, `status`, `course_schedule`, `student_group`, `date`, `docstatus`, `creation`, `modified`, `owner`, `modified_by`)
                     VALUES {placeholders}
                 """
                 frappe.db.sql(sql, flat_values)
@@ -849,10 +884,12 @@ def sync_external_attendance(sync_date=None, local_file_path=None):
         log.records_processed = len(records_to_update) + len(docs_to_insert)
         log.unmapped_students = len(api_student_ids) - len(student_id_map)
         log.save(); frappe.db.commit()
+        return log.name
 
     except Exception as e:
         frappe.db.rollback(); log.status = "Failed"; log.log_details = f"An error occurred during sync override: \n{frappe.get_traceback()}"; log.save(); frappe.db.commit()
         frappe.log_error("External Attendance Sync Failed", frappe.get_traceback())
+        return log.name
 
 @frappe.whitelist()
 def send_weekly_attendance_summary():
