@@ -23,13 +23,13 @@ TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES = [
 # NOTE: For instructor reminders, only send notifications for missed attendance
 # that matches one of the following patterns. E.g., ['SEM-01'] for first semester.
 ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
-    'SEM-01'
+    'SEM-01', 'SEM-04', 'SEM-06'
 ]
 
 # NOTE: For Daily Attendance Summary, only send SMS to students in groups matching ALL these patterns.
 # Example: ["BTECH", "SEM-01"] means the group name must contain BOTH "BTECH" and "SEM-01".
 # Leave empty to disable filtering (send to all).
-DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01"]
+DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01", "SEM-04", "SEM-06"]
 
 # NOTE: Get these Template IDs from your SMS provider.
 WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399999' # Replace with actual ID

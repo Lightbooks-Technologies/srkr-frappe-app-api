@@ -31,6 +31,7 @@ def execute(filters=None):
             sa.status,
             cs.course,
             cs.from_time,
+            cs.to_time,
             c.course_name
         FROM `tabStudent Attendance` sa
         JOIN `tabCourse Schedule` cs ON sa.course_schedule = cs.name
@@ -50,37 +51,75 @@ def execute(filters=None):
         frappe.msgprint(_("No attendance records found for this student in the selected date range."))
         return [], []
 
-    # Get unique courses from attendance records
-    courses = {}
-    for record in attendance_records:
-        if record.course not in courses:
-            courses[record.course] = record.course_name
-
-    # Sort courses by name for consistent column order
-    sorted_courses = [{"name": k, "course_name": v} for k, v in sorted(courses.items(), key=lambda x: x[1])]
-
-    columns = get_columns(sorted_courses)
-    data = get_data(attendance_records, sorted_courses)
+    columns = get_columns(attendance_records)
+    data = get_data(attendance_records, columns)
 
     return columns, data
 
-def get_columns(courses):
+def format_time_from_timedelta(time_delta):
+    """Convert timedelta to formatted time string like '9:00 am'"""
+    if not time_delta:
+        return ""
+    
+    total_seconds = int(time_delta.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    from_dt = frappe.utils.datetime.datetime.strptime(f"{hours:02d}:{minutes:02d}", "%H:%M")
+    return from_dt.strftime("%I:%M %p").lower().lstrip('0')
+
+def get_columns(attendance_records):
+    """
+    Generate columns: Date, Day, and one column per unique class session (course + time slot)
+    """
     columns = [
         {"fieldname": "date", "label": _("Date"), "fieldtype": "Date", "width": 100},
         {"fieldname": "day", "label": _("Day"), "fieldtype": "Data", "width": 100}
     ]
 
-    for course in courses:
+    # Get unique class sessions (course + time combination)
+    class_sessions = {}
+    
+    for record in attendance_records:
+        from_time_str = format_time_from_timedelta(record.from_time)
+        to_time_str = format_time_from_timedelta(record.to_time)
+        
+        # Create a unique key for this class session
+        session_key = f"{record.course}_{record.from_time}_{record.to_time}"
+        
+        if session_key not in class_sessions:
+            # Create column label with course name and time
+            if from_time_str and to_time_str:
+                label = f"{record.course_name}\n({from_time_str} - {to_time_str})"
+            else:
+                label = record.course_name
+            
+            class_sessions[session_key] = {
+                "course": record.course,
+                "course_name": record.course_name,
+                "from_time": record.from_time,
+                "to_time": record.to_time,
+                "label": label,
+                "fieldname": frappe.scrub(session_key)
+            }
+    
+    # Sort sessions by course name and time
+    sorted_sessions = sorted(class_sessions.values(), 
+                            key=lambda x: (x["course_name"], x["from_time"] or 0))
+    
+    for session in sorted_sessions:
         columns.append({
-            "fieldname": frappe.scrub(course["name"]),
-            "label": course["course_name"],
+            "fieldname": session["fieldname"],
+            "label": session["label"],
             "fieldtype": "Data",
-            "width": 120
+            "width": 150
         })
 
     return columns
 
-def get_data(attendance_records, courses):
+def get_data(attendance_records, columns):
+    """
+    Build data rows grouped by date
+    """
     # Group by Date
     data_map = {}
     
@@ -92,7 +131,10 @@ def get_data(attendance_records, courses):
                 "day": record.date.strftime("%A"),
             }
         
-        course_field = frappe.scrub(record.course)
+        # Create session key matching the column fieldname
+        session_key = f"{record.course}_{record.from_time}_{record.to_time}"
+        session_fieldname = frappe.scrub(session_key)
+        
         status = record.status
         
         # Abbreviate status
@@ -108,11 +150,8 @@ def get_data(attendance_records, courses):
         else:
             status_abbr = status[0].upper() if status else "?"
 
-        # If multiple classes of same course on same day, concatenate
-        if course_field in data_map[date_str]:
-            data_map[date_str][course_field] += ", " + status_abbr
-        else:
-            data_map[date_str][course_field] = status_abbr
+        # Set the status in the appropriate column
+        data_map[date_str][session_fieldname] = status_abbr
 
     # Flatten to list and sort by date
     data = []
