@@ -16,8 +16,9 @@ SEMESTER_START_DATE = '2024-02-12'
 # NOTE: Add SUBSTRINGS of the Student Groups you want to send summaries to.
 # This is now a pattern match, not an exact match.
 TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES = [
-    'BTECH-SEM-03',
-    'BTECH-SEM-05'
+    'BTECH-SEM-01',
+    'BTECH-SEM-04',
+    'BTECH-SEM-06'
 ]
 
 # NOTE: For instructor reminders, only send notifications for missed attendance
@@ -27,7 +28,8 @@ ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
 ]
 
 # NOTE: For Daily Attendance Summary, only send SMS to students in groups matching ALL these patterns.
-# Example: ["BTECH", "SEM-01"] means the group name must contain BOTH "BTECH" and "SEM-01".
+# The logic is: "BTECH" is mandatory (if in list), and at least one other pattern must match.
+# Example: ["BTECH", "SEM-01", "SEM-04"] means: Must have "BTECH" AND (must have "SEM-01" OR "SEM-04").
 # Leave empty to disable filtering (send to all).
 DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01", "SEM-04", "SEM-06"]
 
@@ -475,13 +477,13 @@ def send_daily_attendance_summary():
                 continue
 
             if DAILY_SUMMARY_REQUIRED_PATTERNS:
-                matches_criteria = True
-                for pattern in DAILY_SUMMARY_REQUIRED_PATTERNS:
-                    if pattern not in student_group:
-                        matches_criteria = False
-                        break
+                # Restoration of working logic: "BTECH" is mandatory (if in the list), 
+                # and at least one of the other patterns (e.g., semesters) must match.
+                has_btech = "BTECH" in student_group if "BTECH" in DAILY_SUMMARY_REQUIRED_PATTERNS else True
+                other_patterns = [p for p in DAILY_SUMMARY_REQUIRED_PATTERNS if p != "BTECH"]
+                has_other = any(p in student_group for p in other_patterns) if other_patterns else True
                 
-                if not matches_criteria:
+                if not (has_btech and has_other):
                     print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {DAILY_SUMMARY_REQUIRED_PATTERNS}.")
                     continue
             # --- END: Configurable Filter ---
