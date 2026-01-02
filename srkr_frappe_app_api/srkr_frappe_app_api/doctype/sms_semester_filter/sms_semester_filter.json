@@ -1,0 +1,31 @@
+{
+    "actions": [],
+    "allow_rename": 1,
+    "creation": "2026-01-02 10:45:00.000000",
+    "doctype": "DocType",
+    "editable_grid": 1,
+    "engine": "InnoDB",
+    "field_order": [
+        "semester"
+    ],
+    "fields": [
+        {
+            "fieldname": "semester",
+            "fieldtype": "Select",
+            "in_list_view": 1,
+            "label": "Semester",
+            "options": "SEM-01\nSEM-02\nSEM-03\nSEM-04\nSEM-05\nSEM-06\nSEM-07\nSEM-08",
+            "reqd": 1
+        }
+    ],
+    "istable": 1,
+    "modified": "2026-01-02 10:45:00.000000",
+    "modified_by": "Administrator",
+    "module": "srkr_frappe_app_api",
+    "name": "SMS Semester Filter",
+    "owner": "Administrator",
+    "permissions": [],
+    "sort_field": "modified",
+    "sort_order": "DESC",
+    "states": []
+}

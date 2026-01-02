@@ -1,0 +1,140 @@
+{
+    "actions": [],
+    "allow_rename": 1,
+    "creation": "2026-01-02 10:46:00.000000",
+    "doctype": "DocType",
+    "engine": "InnoDB",
+    "field_order": [
+        "global_settings_section",
+        "dry_run",
+        "daily_summary_section",
+        "enable_daily_summary",
+        "daily_summary_category",
+        "column_break_3",
+        "sem_01",
+        "sem_02",
+        "sem_03",
+        "sem_04",
+        "sem_05",
+        "sem_06",
+        "sem_07",
+        "sem_08"
+    ],
+    "fields": [
+        {
+            "fieldname": "global_settings_section",
+            "fieldtype": "Section Break",
+            "label": "Global Settings"
+        },
+        {
+            "default": "0",
+            "fieldname": "dry_run",
+            "fieldtype": "Check",
+            "help": "If checked, SMS will NOT be sent. Messages will only be printed to the console/logs.",
+            "label": "Dry Run (Log Only - No SMS)"
+        },
+        {
+            "fieldname": "daily_summary_section",
+            "fieldtype": "Section Break",
+            "label": "Daily Attendance Summary"
+        },
+        {
+            "default": "0",
+            "fieldname": "enable_daily_summary",
+            "fieldtype": "Check",
+            "label": "Enable Daily Summary SMS"
+        },
+        {
+            "default": "BTECH",
+            "fieldname": "daily_summary_category",
+            "fieldtype": "Data",
+            "label": "Target Category (e.g. BTECH)",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "fieldname": "column_break_3",
+            "fieldtype": "Column Break"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_01",
+            "fieldtype": "Check",
+            "label": "SEM-01",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_02",
+            "fieldtype": "Check",
+            "label": "SEM-02",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_03",
+            "fieldtype": "Check",
+            "label": "SEM-03",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_04",
+            "fieldtype": "Check",
+            "label": "SEM-04",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_05",
+            "fieldtype": "Check",
+            "label": "SEM-05",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_06",
+            "fieldtype": "Check",
+            "label": "SEM-06",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_07",
+            "fieldtype": "Check",
+            "label": "SEM-07",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        },
+        {
+            "default": "0",
+            "fieldname": "sem_08",
+            "fieldtype": "Check",
+            "label": "SEM-08",
+            "depends_on": "eval:doc.enable_daily_summary == 1"
+        }
+    ],
+    "index_web_pages_for_search": 1,
+    "issingle": 1,
+    "links": [],
+    "modified": "2026-01-02 11:05:00.000000",
+    "modified_by": "Administrator",
+    "module": "srkr_frappe_app_api",
+    "name": "SMS Notification Settings",
+    "owner": "Administrator",
+    "permissions": [
+        {
+            "create": 1,
+            "delete": 1,
+            "email": 1,
+            "export": 1,
+            "print": 1,
+            "read": 1,
+            "report": 1,
+            "role": "System Manager",
+            "share": 1,
+            "write": 1
+        }
+    ],
+    "sort_field": "modified",
+    "sort_order": "DESC",
+    "states": []
+}

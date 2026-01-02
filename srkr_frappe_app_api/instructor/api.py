@@ -408,6 +408,15 @@ def send_summary_sms_helper(mobile_no, message_text, template_id):
     USERNAME = "srkrec"
     SENDER_ID = "SRKREC"
     
+    # --- DRY RUN CHECK ---
+    try:
+        if frappe.get_single("SMS Notification Settings").dry_run:
+            print(f"[DRY RUN] Would send to {mobile_no}: {message_text}")
+            return "DRY_RUN_SUCCESS"
+    except Exception:
+        pass # Fallback to normal if settings not found
+    # ---------------------
+    
     params = {"username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID, "mobile": mobile_no, "message": message_text, "templateid": template_id}
     
     try:
@@ -425,6 +434,30 @@ def send_summary_sms_helper(mobile_no, message_text, template_id):
 @frappe.whitelist()
 def send_daily_attendance_summary():
     """Scheduled function to send a consolidated SMS to parents of absent students."""
+    
+    # --- UI SETTINGS FETCH ---
+    try:
+        sms_settings = frappe.get_single("SMS Notification Settings")
+        if not sms_settings.enable_daily_summary:
+            print("Daily Attendance Summary SMS is disabled in 'SMS Notification Settings'. Skipping.")
+            return
+        
+        # Load from UI (Checkboxes)
+        category = sms_settings.daily_summary_category or "BTECH"
+        semesters = []
+        for i in range(1, 9):
+            fieldname = f"sem_0{i}"
+            if sms_settings.get(fieldname):
+                semesters.append(f"SEM-0{i}")
+        
+        current_patterns = [category] + semesters
+        print(f"Using UI-configured patterns: {current_patterns}")
+    except (frappe.DoesNotExistError, Exception):
+        # Fallback to hardcoded constants if the DocType hasn't been migrated or doesn't exist
+        print("Note: 'SMS Notification Settings' not found. Falling back to hardcoded patterns.")
+        current_patterns = DAILY_SUMMARY_REQUIRED_PATTERNS
+    # --------------------------
+
     processing_date = today()
     print(f"--- Running Daily Student Attendance Summary for {processing_date} ---")
 
@@ -476,15 +509,15 @@ def send_daily_attendance_summary():
                 print(f"Skipping student {student_id} as student_group is missing.")
                 continue
 
-            if DAILY_SUMMARY_REQUIRED_PATTERNS:
+            if current_patterns:
                 # Restoration of working logic: "BTECH" is mandatory (if in the list), 
                 # and at least one of the other patterns (e.g., semesters) must match.
-                has_btech = "BTECH" in student_group if "BTECH" in DAILY_SUMMARY_REQUIRED_PATTERNS else True
-                other_patterns = [p for p in DAILY_SUMMARY_REQUIRED_PATTERNS if p != "BTECH"]
+                has_category = current_patterns[0] in student_group if current_patterns else True
+                other_patterns = current_patterns[1:] if len(current_patterns) > 1 else []
                 has_other = any(p in student_group for p in other_patterns) if other_patterns else True
                 
-                if not (has_btech and has_other):
-                    print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {DAILY_SUMMARY_REQUIRED_PATTERNS}.")
+                if not (has_category and has_other):
+                    print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {current_patterns}.")
                     continue
             # --- END: Configurable Filter ---
             
