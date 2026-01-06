@@ -5,8 +5,6 @@
     "doctype": "DocType",
     "engine": "InnoDB",
     "field_order": [
-        "global_settings_section",
-        "dry_run",
         "daily_summary_section",
         "enable_daily_summary",
         "daily_summary_category",
@@ -21,18 +19,6 @@
         "sem_08"
     ],
     "fields": [
-        {
-            "fieldname": "global_settings_section",
-            "fieldtype": "Section Break",
-            "label": "Global Settings"
-        },
-        {
-            "default": "0",
-            "fieldname": "dry_run",
-            "fieldtype": "Check",
-            "help": "If checked, SMS will NOT be sent. Messages will only be printed to the console/logs.",
-            "label": "Dry Run (Log Only - No SMS)"
-        },
         {
             "fieldname": "daily_summary_section",
             "fieldtype": "Section Break",
@@ -115,7 +101,7 @@
     "index_web_pages_for_search": 1,
     "issingle": 1,
     "links": [],
-    "modified": "2026-01-02 11:05:00.000000",
+    "modified": "2026-01-06 15:20:00.000000",
     "modified_by": "Administrator",
     "module": "srkr_frappe_app_api",
     "name": "SMS Notification Settings",

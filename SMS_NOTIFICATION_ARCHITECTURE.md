@@ -11,7 +11,6 @@ The system uses a **Single DocType** named `SMS Notification Settings` to provid
 - **Module**: `srkr_frappe_app_api`
 
 ### Current Fields:
-- `dry_run` (Check): Global toggle. If enabled, no SMS is actually sent; messages are only printed to logs.
 - `enable_daily_summary` (Check): Master toggle for the Daily summary job.
 - `daily_summary_category` (Data): The program prefix (e.g., `BTECH`).
 - `sem_01` to `sem_08` (Check): Checkbox for each semester.
@@ -46,18 +45,11 @@ def send_instructor_reminders():
 ```
 
 ### Step C: Use the SMS Helper
-Always use the `send_summary_sms_helper` function. It automatically respects the `dry_run` setting:
+Always use the `send_summary_sms_helper` function.
 
 ```python
 message_id = send_summary_sms_helper(mobile_no, message_text, template_id)
 ```
 
-## 4. Testing without sending SMS
-1. Go to **SMS Notification Settings**.
-2. Check **Dry Run (Log Only - No SMS)**.
-3. Save.
-4. Run your function manually or via console.
-5. Check the bench console or logs for: `[DRY RUN] Would send to ...`
-
 ---
-*Created on 2026-01-02*
+*Updated on 2026-01-06*

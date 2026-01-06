@@ -176,19 +176,46 @@ def get_data(filters):
     if not semester_student_groups:
         return format_students_with_zero_attendance(students_list)
     
-    # Step 4: Get ALL course schedules for those student groups
-    all_schedule_ids = [cs.name for cs in frappe.get_all(
-        "Course Schedule",
-        filters={"student_group": ["in", semester_student_groups]},
-        fields=["name"]
-    )]
+    # Step 5: Get student group memberships for our students in this semester
+    student_memberships = frappe.get_all(
+        "Student Group Student",
+        filters={
+            "student": ["in", student_ids],
+            "active": 1,
+            "parent": ["in", semester_student_groups]
+        },
+        fields=["student", "parent"]
+    )
     
+    student_to_groups = {}
+    for m in student_memberships:
+        if m.student not in student_to_groups:
+            student_to_groups[m.student] = set()
+        student_to_groups[m.student].add(m.parent)
+
+    # Step 6: Get group to schedules mapping
+    all_course_schedules = frappe.get_all(
+        "Course Schedule",
+        filters={
+            "student_group": ["in", semester_student_groups],
+            "schedule_date": [">=", FIRST_YEAR_ATTENDANCE_START_DATE] if is_first_year else [">", "1900-01-01"]
+        },
+        fields=["name", "student_group"]
+    )
+    
+    group_to_schedules = {}
+    all_schedule_ids = []
+    for cs in all_course_schedules:
+        all_schedule_ids.append(cs.name)
+        if cs.student_group not in group_to_schedules:
+            group_to_schedules[cs.student_group] = set()
+        group_to_schedules[cs.student_group].add(cs.name)
+
     if not all_schedule_ids:
         # No schedules found, return students with zero attendance
         return format_students_with_zero_attendance(students_list)
     
-    # Step 5: Get attendance records for our students across ALL schedules in the semester
-    # UPDATED: Add date filter for first year groups
+    # Step 7: Get attendance records for our students across relevant schedules
     StudentAttendance = frappe.qb.DocType("Student Attendance")
     
     attendance_query = (
@@ -206,7 +233,7 @@ def get_data(filters):
         )
     )
     
-    # Add date filter for first year groups
+    # Add date filter for first year groups (additional safety)
     if is_first_year:
         attendance_query = attendance_query.where(
             StudentAttendance.date >= FIRST_YEAR_ATTENDANCE_START_DATE
@@ -214,11 +241,11 @@ def get_data(filters):
     
     attendance_records = attendance_query.run(as_dict=True)
     
-    # Step 6: Process attendance data
-    return process_attendance_data(students_list, attendance_records, all_schedule_ids, student_ids)
+    # Step 8: Process attendance data
+    return process_attendance_data(students_list, attendance_records, student_to_groups, group_to_schedules)
 
 
-def process_attendance_data(students_list, attendance_records, all_schedule_ids, student_ids):
+def process_attendance_data(students_list, attendance_records, student_to_groups, group_to_schedules):
     """Process attendance records and calculate statistics"""
     
     # Create a mapping of student to their attendance records
@@ -243,13 +270,22 @@ def process_attendance_data(students_list, attendance_records, all_schedule_ids,
     for student in students_list:
         student_id = student.student
         
+        # Calculate expected total classes based on student's group memberships in this semester
+        expected_schedules = set()
+        student_groups = student_to_groups.get(student_id, set())
+        for group in student_groups:
+            expected_schedules.update(group_to_schedules.get(group, set()))
+        
+        # Merge with schedules from actual attendance records (ensures consistency)
+        actual_schedules = set()
+        attended_count = 0
+        
         if student_id in student_attendance_map:
             attended_count = len(student_attendance_map[student_id]['attended'])
-            total_count = len(student_attendance_map[student_id]['total'])
-        else:
-            # Student has no attendance records
-            attended_count = 0
-            total_count = 0
+            actual_schedules = student_attendance_map[student_id]['total']
+        
+        total_schedules_set = expected_schedules.union(actual_schedules)
+        total_count = len(total_schedules_set)
         
         # Calculate percentage
         if total_count > 0:

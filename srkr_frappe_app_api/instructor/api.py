@@ -408,15 +408,6 @@ def send_summary_sms_helper(mobile_no, message_text, template_id):
     USERNAME = "srkrec"
     SENDER_ID = "SRKREC"
     
-    # --- DRY RUN CHECK ---
-    try:
-        if frappe.get_single("SMS Notification Settings").dry_run:
-            print(f"[DRY RUN] Would send to {mobile_no}: {message_text}")
-            return "DRY_RUN_SUCCESS"
-    except Exception:
-        pass # Fallback to normal if settings not found
-    # ---------------------
-    
     params = {"username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID, "mobile": mobile_no, "message": message_text, "templateid": template_id}
     
     try:
