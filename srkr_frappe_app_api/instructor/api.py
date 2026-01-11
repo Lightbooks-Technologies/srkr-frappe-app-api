@@ -433,19 +433,24 @@ def send_daily_attendance_summary():
             print("Daily Attendance Summary SMS is disabled in 'SMS Notification Settings'. Skipping.")
             return
         
-        # Load from UI (Checkboxes)
-        category = sms_settings.daily_summary_category or "BTECH"
-        semesters = []
-        for i in range(1, 9):
-            fieldname = f"sem_0{i}"
-            if sms_settings.get(fieldname):
-                semesters.append(f"SEM-0{i}")
-        
-        current_patterns = [category] + semesters
-        print(f"Using UI-configured patterns: {current_patterns}")
+        # EMERGENCY FALLBACK: Check if we should ignore UI and use code
+        if sms_settings.ignore_ui_and_use_code_defaults:
+            print("EMERGENCY FALLBACK: 'Ignore UI' is checked. Using hardcoded patterns from api.py")
+            current_patterns = DAILY_SUMMARY_REQUIRED_PATTERNS
+        else:
+            # Load from UI (Checkboxes)
+            category = sms_settings.daily_summary_category or "BTECH"
+            semesters = []
+            for i in range(1, 9):
+                fieldname = f"sem_0{i}"
+                if sms_settings.get(fieldname):
+                    semesters.append(f"SEM-0{i}")
+            
+            current_patterns = [category] + semesters
+            print(f"Using UI-configured patterns: {current_patterns}")
     except (frappe.DoesNotExistError, Exception):
         # Fallback to hardcoded constants if the DocType hasn't been migrated or doesn't exist
-        print("Note: 'SMS Notification Settings' not found. Falling back to hardcoded patterns.")
+        print("Note: 'SMS Notification Settings' not found or error occurred. Falling back to hardcoded patterns.")
         current_patterns = DAILY_SUMMARY_REQUIRED_PATTERNS
     # --------------------------
 
