@@ -193,15 +193,26 @@ def get_data(filters):
             student_to_groups[m.student] = set()
         student_to_groups[m.student].add(m.parent)
 
-    # Step 6: Get group to schedules mapping
-    all_course_schedules = frappe.get_all(
-        "Course Schedule",
-        filters={
-            "student_group": ["in", semester_student_groups],
-            "schedule_date": [">=", FIRST_YEAR_ATTENDANCE_START_DATE] if is_first_year else [">", "1900-01-01"]
-        },
-        fields=["name", "student_group"]
+    # Step 6: Get group to schedules mapping (only those with submitted attendance)
+    # This prevents counting future classes or classes where attendance wasn't taken
+    CourseSchedule = frappe.qb.DocType("Course Schedule")
+    StudentAttendance = frappe.qb.DocType("Student Attendance")
+    
+    schedules_query = (
+        frappe.qb.from_(CourseSchedule)
+        .join(StudentAttendance).on(StudentAttendance.course_schedule == CourseSchedule.name)
+        .select(CourseSchedule.name, CourseSchedule.student_group)
+        .where(CourseSchedule.student_group.isin(semester_student_groups))
+        .where(StudentAttendance.docstatus == 1)
+        .where(CourseSchedule.schedule_date <= frappe.utils.today())
     )
+    
+    if is_first_year:
+        schedules_query = schedules_query.where(
+            CourseSchedule.schedule_date >= FIRST_YEAR_ATTENDANCE_START_DATE
+        )
+    
+    all_course_schedules = schedules_query.distinct().run(as_dict=True)
     
     group_to_schedules = {}
     all_schedule_ids = []
