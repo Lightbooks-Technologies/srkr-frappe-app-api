@@ -12,6 +12,8 @@ def get_mentorship_students(instructor):
     - student_group: The student's active group name.
     - custom_student_id: The student's custom ID.
     - student_image: The full URL to the student's profile image.
+    - guardian_name: Name of father or mother.
+    - guardian_phone: Phone number of father or mother.
     """
     from frappe.utils import get_url
 
@@ -44,10 +46,22 @@ def get_mentorship_students(instructor):
         student_details = frappe.get_all(
             "Student",
             filters={"name": ["in", student_ids]},
-            fields=["name", "custom_student_id", "image"] # <-- CORRECTED FIELD NAME
+            fields=[
+                "name", "custom_student_id", "image",
+                "custom_father_name", "custom_father_mobile_number",
+                "custom_mother_name", "custom_mother_mobile_number"
+            ]
         )
         
         student_to_custom_id = {s.name: s.custom_student_id for s in student_details}
+        
+        # --- Step 2.6: Get Guardian (Father or Mother) details ---
+        student_to_guardian = {}
+        for s in student_details:
+            # Pick father's info if available, otherwise mother's
+            name = s.custom_father_name or s.custom_mother_name
+            phone = s.custom_father_mobile_number or s.custom_mother_mobile_number
+            student_to_guardian[s.name] = {"name": name, "phone": phone}
         
         # --- THIS IS THE FIX ---
         # Manually construct the full URL for each image using the correct field name
@@ -66,6 +80,10 @@ def get_mentorship_students(instructor):
                 profile["student_group"] = student_to_group.get(student_id)
                 profile["custom_student_id"] = student_to_custom_id.get(student_id)
                 profile["student_image"] = student_to_image.get(student_id)
+
+                guardian = student_to_guardian.get(student_id, {})
+                profile["guardian_name"] = guardian.get("name")
+                profile["guardian_phone"] = guardian.get("phone")
             return student_profiles
 
         course_schedules = frappe.get_all(
@@ -82,6 +100,10 @@ def get_mentorship_students(instructor):
                 profile["student_group"] = student_to_group.get(student_id)
                 profile["custom_student_id"] = student_to_custom_id.get(student_id)
                 profile["student_image"] = student_to_image.get(student_id)
+
+                guardian = student_to_guardian.get(student_id, {})
+                profile["guardian_name"] = guardian.get("name")
+                profile["guardian_phone"] = guardian.get("phone")
             return student_profiles
             
         attendance_records = frappe.get_all(
@@ -114,6 +136,10 @@ def get_mentorship_students(instructor):
             profile["student_group"] = student_to_group.get(student_id)
             profile["custom_student_id"] = student_to_custom_id.get(student_id)
             profile["student_image"] = student_to_image.get(student_id)
+
+            guardian = student_to_guardian.get(student_id, {})
+            profile["guardian_name"] = guardian.get("name")
+            profile["guardian_phone"] = guardian.get("phone")
 
         return student_profiles
 
