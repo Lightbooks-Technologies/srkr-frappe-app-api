@@ -41,6 +41,15 @@ def get_mentorship_students(instructor):
             fields=["student", "parent"]
         )
         student_to_group = {sg.student: sg.parent for sg in student_group_mappings}
+
+        # --- Step 2.1: Get Academic Year and Semester from Student Groups ---
+        unique_groups = list(set(student_to_group.values()))
+        group_details = frappe.get_all(
+            "Student Group",
+            filters={"name": ["in", unique_groups]},
+            fields=["name", "academic_year", "program_semester"]
+        )
+        group_to_info = {g.name: {"ay": g.academic_year, "sem": g.program_semester} for g in group_details}
         
         # --- Step 2.5 (CORRECTED): Get Custom IDs and the 'image' field ---
         student_details = frappe.get_all(
@@ -84,6 +93,14 @@ def get_mentorship_students(instructor):
                 guardian = student_to_guardian.get(student_id, {})
                 profile["guardian_name"] = guardian.get("name")
                 profile["guardian_phone"] = guardian.get("phone")
+
+                group_info = group_to_info.get(profile["student_group"], {})
+                profile["academic_year"] = group_info.get("ay")
+                profile["program_semester"] = group_info.get("sem")
+            
+            # Final Sort: By Semester (DESC - Higher first) and then by Name (ASC)
+            student_profiles.sort(key=lambda x: x.get("student_name") or "")
+            student_profiles.sort(key=lambda x: x.get("program_semester") or "", reverse=True)
             return student_profiles
 
         course_schedules = frappe.get_all(
@@ -104,6 +121,14 @@ def get_mentorship_students(instructor):
                 guardian = student_to_guardian.get(student_id, {})
                 profile["guardian_name"] = guardian.get("name")
                 profile["guardian_phone"] = guardian.get("phone")
+
+                group_info = group_to_info.get(profile["student_group"], {})
+                profile["academic_year"] = group_info.get("ay")
+                profile["program_semester"] = group_info.get("sem")
+            
+            # Final Sort: By Semester (DESC - Higher first) and then by Name (ASC)
+            student_profiles.sort(key=lambda x: x.get("student_name") or "")
+            student_profiles.sort(key=lambda x: x.get("program_semester") or "", reverse=True)
             return student_profiles
             
         attendance_records = frappe.get_all(
@@ -140,6 +165,14 @@ def get_mentorship_students(instructor):
             guardian = student_to_guardian.get(student_id, {})
             profile["guardian_name"] = guardian.get("name")
             profile["guardian_phone"] = guardian.get("phone")
+
+            group_info = group_to_info.get(profile["student_group"], {})
+            profile["academic_year"] = group_info.get("ay")
+            profile["program_semester"] = group_info.get("sem")
+
+        # Final Sort: By Semester (DESC - Higher first) and then by Name (ASC)
+        student_profiles.sort(key=lambda x: x.get("student_name") or "")
+        student_profiles.sort(key=lambda x: x.get("program_semester") or "", reverse=True)
 
         return student_profiles
 
