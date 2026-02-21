@@ -34,22 +34,38 @@ def get_mentorship_students(instructor):
 
         student_ids = [p["student"] for p in student_profiles]
         
-        # --- Step 2: Get Student Group mappings ---
-        student_group_mappings = frappe.get_all(
-            "Student Group Student",
-            filters={"student": ["in", student_ids], "active": 1},
-            fields=["student", "parent"]
-        )
-        student_to_group = {sg.student: sg.parent for sg in student_group_mappings}
+        # --- Step 2: Get the correct current Student Group for each student ---
+        # Logic:
+        # 1. Join Student Group Student -> Student Group -> Program Enrollment
+        # 2. Filter by current_semester from Program Enrollment (source of truth for active semester)
+        # 3. Among matched groups, pick the shortest name = base group (subgroups extend the base name)
+        student_ids_str = ", ".join([f"'{s}'" for s in student_ids])
+        group_rows = frappe.db.sql(f"""
+            SELECT
+                sgs.student,
+                sg.name AS group_name,
+                sg.academic_year,
+                sg.program_semester
+            FROM `tabStudent Group Student` sgs
+            JOIN `tabStudent Group` sg ON sg.name = sgs.parent
+            JOIN `tabProgram Enrollment` pe ON pe.student = sgs.student
+            WHERE sgs.student IN ({student_ids_str})
+            AND sgs.active = 1
+            AND sg.disabled = 0
+            AND sg.program_semester = pe.current_semester
+            ORDER BY sgs.student, LENGTH(sg.name) ASC
+        """, as_dict=True)
 
-        # --- Step 2.1: Get Academic Year and Semester from Student Groups ---
-        unique_groups = list(set(student_to_group.values()))
-        group_details = frappe.get_all(
-            "Student Group",
-            filters={"name": ["in", unique_groups]},
-            fields=["name", "academic_year", "program_semester"]
-        )
-        group_to_info = {g.name: {"ay": g.academic_year, "sem": g.program_semester} for g in group_details}
+        # For each student, keep only the first row (shortest name = base group)
+        student_to_group = {}
+        group_to_info = {}
+        for row in group_rows:
+            if row.student not in student_to_group:
+                student_to_group[row.student] = row.group_name
+                group_to_info[row.group_name] = {
+                    "ay": row.academic_year,
+                    "sem": row.program_semester
+                }
         
         # --- Step 2.5 (CORRECTED): Get Custom IDs and the 'image' field ---
         student_details = frappe.get_all(
