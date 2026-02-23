@@ -231,4 +231,184 @@ def get_mentorship_log_details(log_id):
     except frappe.DoesNotExistError:
         frappe.throw(f"Mentorship Log Entry with ID '{log_id}' not found.", frappe.NotFound)
 
+@frappe.whitelist()
+def get_student_attendance(student):
+    """
+    Returns attendance stats for the logged-in student across all semesters.
 
+    Response shape:
+    {
+        "current_semester": {
+            "semester": "SEM-03",
+            "group": "BTECH-EEE-AY2526-SEM-03-A",
+            "overall_percentage": 85.0,
+            "attended": 370,
+            "total": 440,
+            "courses": [
+                {"course_name": "...", "percentage": 93.1, "attended": 54, "total": 58}
+            ]
+        },
+        "history": [
+            {"semester": "SEM-02", "group": "BTECH-EEE-AY2526-SEM-02-A", "overall_percentage": 78.5, "attended": 266, "total": 340},
+        ]
+    }
+    """
+    if not student:
+        frappe.throw("Parameter 'student' is required.")
+
+    try:
+        # --- Step 1: Get current_semester from Program Enrollment ---
+        current_semester = frappe.db.get_value(
+            "Program Enrollment",
+            {"student": student},
+            "current_semester"
+        )
+
+        if not current_semester:
+            frappe.throw(f"No Program Enrollment found for student '{student}'.")
+
+        # --- Step 2: Get all base groups for this student across all semesters ---
+        # For each semester, pick the group with the shortest name (base group).
+        # Subgroups always extend the base group name, so shortest = base.
+        all_group_rows = frappe.db.sql("""
+            SELECT
+                sg.name AS group_name,
+                sg.program_semester,
+                sg.academic_year
+            FROM `tabStudent Group Student` sgs
+            JOIN `tabStudent Group` sg ON sg.name = sgs.parent
+            WHERE sgs.student = %(student)s
+            AND sgs.active = 1
+            AND sg.disabled = 0
+            ORDER BY sg.program_semester, LENGTH(sg.name) ASC
+        """, {"student": student}, as_dict=True)
+
+        # Keep only the first (shortest-named) group per semester
+        semester_to_group = {}
+        for row in all_group_rows:
+            if row.program_semester not in semester_to_group:
+                semester_to_group[row.program_semester] = row
+
+        if not semester_to_group:
+            return {"current_semester": None, "history": []}
+
+        # --- Step 3: Separate current group from historical groups ---
+        current_group_info = semester_to_group.get(current_semester)
+        past_groups = [
+            info for sem, info in semester_to_group.items()
+            if sem != current_semester
+        ]
+
+        # --- Helper: Calculate attendance for a single group scoped to one student ---
+        def get_attendance_for_group(group_name, with_course_breakdown=False):
+            """
+            Returns attendance stats for a student in a given group.
+            If with_course_breakdown=True, also returns per-course stats.
+            """
+            # Get all course schedules for this group
+            course_schedules = frappe.get_all(
+                "Course Schedule",
+                filters={"student_group": group_name},
+                fields=["name", "course"]
+            )
+
+            if not course_schedules:
+                result = {"attended": 0, "total": 0, "overall_percentage": None}
+                if with_course_breakdown:
+                    result["courses"] = []
+                return result
+
+            all_schedule_ids = [cs.name for cs in course_schedules]
+
+            # Get all submitted attendance records for this student in this group
+            attendance_records = frappe.get_all(
+                "Student Attendance",
+                filters={
+                    "student": student,
+                    "course_schedule": ["in", all_schedule_ids],
+                    "docstatus": 1
+                },
+                fields=["course_schedule", "status"]
+            )
+
+            # Build a lookup: schedule_id -> status
+            schedule_status = {r.course_schedule: r.status for r in attendance_records}
+
+            # --- Overall stats ---
+            total = len(all_schedule_ids)
+            attended = sum(1 for cs in course_schedules if schedule_status.get(cs.name) == "Present")
+            overall_percentage = round((attended / total) * 100, 2) if total > 0 else None
+
+            result = {
+                "attended": attended,
+                "total": total,
+                "overall_percentage": overall_percentage
+            }
+
+            if not with_course_breakdown:
+                return result
+
+            # --- Course-wise breakdown ---
+            # Get course names
+            course_ids = list(set(cs.course for cs in course_schedules if cs.course))
+            course_details = frappe.get_all(
+                "Course",
+                filters={"name": ["in", course_ids]},
+                fields=["name", "course_name"]
+            )
+            course_name_map = {c.name: c.course_name for c in course_details}
+
+            # Group schedules by course
+            course_to_schedules = {}
+            for cs in course_schedules:
+                if cs.course:
+                    course_to_schedules.setdefault(cs.course, []).append(cs.name)
+
+            courses = []
+            for course_id, schedule_ids in course_to_schedules.items():
+                c_total = len(schedule_ids)
+                c_attended = sum(1 for sid in schedule_ids if schedule_status.get(sid) == "Present")
+                c_percentage = round((c_attended / c_total) * 100, 2) if c_total > 0 else None
+                courses.append({
+                    "course_name": course_name_map.get(course_id, course_id),
+                    "percentage": c_percentage,
+                    "attended": c_attended,
+                    "total": c_total
+                })
+
+            # Sort courses by name for consistent ordering
+            courses.sort(key=lambda x: x["course_name"])
+            result["courses"] = courses
+            return result
+
+        # --- Step 4: Build current semester response ---
+        current_data = None
+        if current_group_info:
+            stats = get_attendance_for_group(current_group_info.group_name, with_course_breakdown=True)
+            current_data = {
+                "semester": current_semester,
+                "group": current_group_info.group_name,
+                **stats
+            }
+
+        # --- Step 5: Build history response ---
+        history = []
+        for group_info in past_groups:
+            stats = get_attendance_for_group(group_info.group_name, with_course_breakdown=False)
+            history.append({
+                "semester": group_info.program_semester,
+                "group": group_info.group_name,
+                **stats
+            })
+
+        # Sort history by semester descending (SEM-04 before SEM-03 etc.)
+        history.sort(key=lambda x: x["semester"], reverse=True)
+
+        return {
+            "current_semester": current_data,
+            "history": history
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_student_attendance API Error")
+        frappe.throw(f"An error occurred: {e}")
