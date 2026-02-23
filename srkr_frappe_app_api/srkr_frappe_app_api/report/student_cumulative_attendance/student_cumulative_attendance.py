@@ -253,50 +253,29 @@ def get_data(filters):
     attendance_records = attendance_query.run(as_dict=True)
     
     # Step 8: Process attendance data
-    return process_attendance_data(students_list, attendance_records, student_to_groups, group_to_schedules)
+    return process_attendance_data(students_list, attendance_records)
 
 
-def process_attendance_data(students_list, attendance_records, student_to_groups, group_to_schedules):
+def process_attendance_data(students_list, attendance_records):
     """Process attendance records and calculate statistics"""
     
     # Create a mapping of student to their attendance records
-    student_attendance_map = {}
+    attendance_summary = {s.student: {"present": 0, "total": 0} for s in students_list}
+    
     for record in attendance_records:
-        student = record.student
-        if student not in student_attendance_map:
-            student_attendance_map[student] = {
-                'attended': set(),
-                'total': set()
-            }
-        
-        # Add this schedule to total classes for this student
-        student_attendance_map[student]['total'].add(record.course_schedule)
-        
-        # If status is Present, add to attended
-        if record.status == "Present":
-            student_attendance_map[student]['attended'].add(record.course_schedule)
+        if record.student in attendance_summary:
+            attendance_summary[record.student]["total"] += 1
+            if record.status == "Present":
+                attendance_summary[record.student]["present"] += 1
     
     # Build result data
     result = []
     for student in students_list:
         student_id = student.student
+        summary = attendance_summary.get(student_id, {"present": 0, "total": 0})
         
-        # Calculate expected total classes based on student's group memberships in this semester
-        expected_schedules = set()
-        student_groups = student_to_groups.get(student_id, set())
-        for group in student_groups:
-            expected_schedules.update(group_to_schedules.get(group, set()))
-        
-        # Merge with schedules from actual attendance records (ensures consistency)
-        actual_schedules = set()
-        attended_count = 0
-        
-        if student_id in student_attendance_map:
-            attended_count = len(student_attendance_map[student_id]['attended'])
-            actual_schedules = student_attendance_map[student_id]['total']
-        
-        total_schedules_set = expected_schedules.union(actual_schedules)
-        total_count = len(total_schedules_set)
+        attended_count = summary["present"]
+        total_count = summary["total"]
         
         # Calculate percentage
         if total_count > 0:
@@ -311,7 +290,7 @@ def process_attendance_data(students_list, attendance_records, student_to_groups
             'group_roll_number': student.group_roll_number,
             'classes_attended': attended_count,
             'total_classes': total_count,
-            'attendance_percentage': percentage
+            'attendance_percentage': round(percentage, 2)
         })
     
     return result
