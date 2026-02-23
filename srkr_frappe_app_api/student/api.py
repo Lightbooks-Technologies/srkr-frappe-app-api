@@ -81,3 +81,154 @@ def get_student_course_summary(student):
 
     return list(course_summaries.values())
 
+@frappe.whitelist()
+def get_course_schedule_for_student(program_name, student_groups, from_date=None, to_date=None):
+    """
+    Retrieves the course schedule for a student based on program and student groups,
+    with optional date range filtering.
+    """
+    # If student_groups is passed as a string (JSON), parse it
+    if isinstance(student_groups, str):
+        import json
+        student_groups = json.loads(student_groups)
+    
+    student_group_list = [sg.get("label") for sg in student_groups]
+
+    filters = {
+        "program": program_name, 
+        "student_group": ["in", student_group_list]
+    }
+
+    if from_date and to_date:
+        filters["schedule_date"] = ["between", [from_date, to_date]]
+    elif from_date:
+        filters["schedule_date"] = [">=", from_date]
+    elif to_date:
+        filters["schedule_date"] = ["<=", to_date]
+
+    schedule = frappe.db.get_list(
+        "Course Schedule",
+        fields=[
+            "schedule_date", 
+            "room", 
+            "class_schedule_color", 
+            "course", 
+            "from_time", 
+            "to_time", 
+            "instructor", 
+            "title", 
+            "name"
+        ],
+        filters=filters,
+        order_by="schedule_date asc",
+    )
+    return schedule
+
+@frappe.whitelist()
+def get_student_info():
+    """
+    Fetches information for the currently logged-in user if they are linked to a Student record.
+    Returns specific fields including 'student_id' and 'student_name'.
+    """
+    current_user_email = frappe.session.user
+
+    if current_user_email == "Administrator":
+        return {"message": "Administrator account. No specific student profile to display."}
+
+    # Find Student record linked to this User
+    # 1. Check 'user' field
+    # 2. Fallback to 'student_email_id'
+    student_found = frappe.get_all(
+        "Student",
+        filters=[
+            ["user", "=", current_user_email],
+            ["enabled", "=", 1]
+        ],
+        fields=["name", "student_name", "first_name", "last_name", "image", "student_email_id"],
+        limit=1
+    )
+
+    if not student_found:
+        student_found = frappe.get_all(
+            "Student",
+            filters=[
+                ["student_email_id", "=", current_user_email],
+                ["enabled", "=", 1]
+            ],
+            fields=["name", "student_name", "first_name", "last_name", "image", "student_email_id"],
+            limit=1
+        )
+
+    if student_found:
+        student = student_found[0]
+        # Get active Program Enrollment for additional context
+        enrollment = frappe.get_all(
+            "Program Enrollment",
+            filters={"student": student.name, "docstatus": 1},
+            fields=["program", "academic_year", "academic_term", "current_semester"],
+            order_by="creation desc",
+            limit=1
+        )
+        
+        student_info = {
+            "student_id": student.name,
+            "student_name": student.student_name,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "email": student.student_email_id,
+            "image": student.image,
+            "enrollment": enrollment[0] if enrollment else None
+        }
+        return student_info
+    else:
+        return {"message": f"No active Student record found linked to user {current_user_email}."}
+
+@frappe.whitelist()
+def get_my_mentorship_logs():
+    """
+    Automatically identifies the logged-in student and returns their mentorship logs.
+    """
+    student_info = get_student_info()
+    if "student_id" not in student_info:
+        frappe.throw(student_info.get("message", "Could not identify student."))
+    
+    return get_mentorship_logs(student_info["student_id"])
+
+@frappe.whitelist()
+def get_mentorship_logs(student):
+    """
+    Get all mentorship log entries for a specific student.
+    :param student: The ID of the student (e.g., "EDU-STU-2025-00119").
+    """
+    if not student:
+        frappe.throw("Parameter 'student' is required.")
+
+    return frappe.get_all(
+        "Mentorship Log Entry",
+        filters={"student": student},
+        fields=["name", "date", "mentor", "academic_term"],
+        order_by="date desc"
+    )
+
+
+@frappe.whitelist()
+def get_mentorship_log_details(log_id):
+    """
+    Get the full details of a single mentorship log entry for a student.
+    :param log_id: The unique name/ID of the Mentorship Log Entry document.
+    """
+    if not log_id:
+        frappe.throw("Parameter 'log_id' is required.")
+        
+    try:
+        # Fetch the log and return as dict
+        log_entry = frappe.get_doc("Mentorship Log Entry", log_id).as_dict()
+        
+        # Optional: Add security check here if needed to ensure the student
+        # is only viewing their own logs.
+        
+        return log_entry
+    except frappe.DoesNotExistError:
+        frappe.throw(f"Mentorship Log Entry with ID '{log_id}' not found.", frappe.NotFound)
+
+
