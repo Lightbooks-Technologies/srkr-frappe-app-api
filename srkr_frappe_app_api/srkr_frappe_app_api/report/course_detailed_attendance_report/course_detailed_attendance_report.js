@@ -23,7 +23,7 @@ frappe.query_reports["Course Detailed Attendance Report"] = {
         if (value === "A") {
             value = `<span style="color:red; font-weight:bold">${value}</span>`;
         }
-        if (typeof value === "number" && column.fieldname.startsWith("date_")) {
+        if (typeof value === "number" && column.fieldname.startsWith("sch_")) {
             value = `<span style="color:green">${value}</span>`;
         }
         return value;

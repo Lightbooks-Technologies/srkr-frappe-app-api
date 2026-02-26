@@ -42,24 +42,20 @@ def get_columns(filters):
     
     date_condition = ""
     if is_first_year:
-        date_condition = f"AND date >= '{FIRST_YEAR_ATTENDANCE_START_DATE}'"
+        date_condition = f"AND schedule_date >= '{FIRST_YEAR_ATTENDANCE_START_DATE}'"
     
-    class_dates = frappe.db.sql(f"""
-        SELECT DISTINCT date
-        FROM `tabStudent Attendance`
+    class_schedules = frappe.db.sql(f"""
+        SELECT name, schedule_date, from_time
+        FROM `tabCourse Schedule`
         WHERE
             student_group = %(student_group)s
-            AND course_schedule IN (
-                SELECT name FROM `tabCourse Schedule`
-                WHERE course = %(course)s
-            )
-            AND docstatus = 1
+            AND course = %(course)s
             {date_condition}
-        ORDER BY date ASC
-    """, filters, as_list=1)
+        ORDER BY schedule_date ASC, from_time ASC
+    """, filters, as_dict=1)
 
-    if not class_dates:
-        frappe.msgprint(_("No attendance records found for the selected course and student group."))
+    if not class_schedules:
+        frappe.msgprint(_("No course schedules found for the selected course and student group."))
         return None
 
     columns = [
@@ -68,15 +64,32 @@ def get_columns(filters):
         {"fieldname": "student_name", "label": _("Name"), "fieldtype": "Data", "width": 250},
     ]
 
-    for idx, date_tuple in enumerate(class_dates):
-        date = date_tuple[0]
-        formatted_date = date.strftime("%d-%b-%y")
-        fieldname = "date_" + date.strftime("%Y_%m_%d")
+    date_periods = {}
+    classes_conducted = 0
+
+    for schedule in class_schedules:
+        schedule_date = schedule.schedule_date
+        date_str = schedule_date.strftime("%Y-%m-%d")
+        
+        if date_str not in date_periods:
+            date_periods[date_str] = 1
+        else:
+            date_periods[date_str] += 1
+            
+        period_num = date_periods[date_str]
+        classes_conducted += 1
+        
+        formatted_date = schedule_date.strftime("%d-%b")
+        fieldname = "sch_" + schedule.name
+        
+        # Include Period and Classes Conducted in the label without HTML tags as they get stripped
+        label = f"{formatted_date} (P:{period_num} CC:{classes_conducted})"
+        
         columns.append({
             "fieldname": fieldname,
-            "label": formatted_date,
+            "label": label,
             "fieldtype": "Data",
-            "width": 80
+            "width": 120
         })
 
     columns.extend([
@@ -121,7 +134,7 @@ def get_data(filters, columns):
         date_condition = f"AND date >= '{FIRST_YEAR_ATTENDANCE_START_DATE}'"
 
     attendance_records = frappe.db.sql(f"""
-        SELECT student, date, status
+        SELECT student, course_schedule, status
         FROM `tabStudent Attendance`
         WHERE
             student IN %(student_ids)s
@@ -132,21 +145,14 @@ def get_data(filters, columns):
             )
             AND docstatus = 1
             {date_condition}
-        ORDER BY date ASC
-    """, {"student_ids": student_ids, **filters}, as_dict=1)
+    """, {"student_ids": student_ids, "student_group": filters.get("student_group"), "course": filters.get("course")}, as_dict=1)
 
     pivoted_attendance = {}
     for record in attendance_records:
-        date_key = record.date.strftime("%Y_%m_%d")
-        status_char = record.status[0].upper() if record.status else '?'
-        
         if record.student not in pivoted_attendance:
             pivoted_attendance[record.student] = {}
-        # Avoid overwriting if multiple classes on same day, just take last or concatenate?
-        # Actually in this specific use case, we map status per day. 
-        # If there are multiple periods per day, we'd need time. I'll just keep the first or last status per day for now
-        # or just map it as normal. Since the date is distinct.
-        pivoted_attendance[record.student][date_key] = status_char
+        status_char = record.status[0].upper() if record.status else '?'
+        pivoted_attendance[record.student][record.course_schedule] = status_char
 
     final_data = []
     sl_no = 1
@@ -166,10 +172,13 @@ def get_data(filters, columns):
         student_attendance_data = pivoted_attendance.get(student.name, {})
         
         for col in columns:
-            if col["fieldname"].startswith("date_"):
-                date_key = col["fieldname"].replace("date_", "")
-                status = student_attendance_data.get(date_key, '-')
+            if col["fieldname"].startswith("sch_"):
+                schedule_name = col["fieldname"].replace("sch_", "")
+                status = student_attendance_data.get(schedule_name, '-')
                 
+                # Treat 'not marked' equivalent to absent or blank depending on requirement, 
+                # but typically means the student was absent if others were marked, or class didn't happen.
+                # Here we only count if marked.
                 if status != '-':
                     total_classes += 1
                     if status == 'P':
