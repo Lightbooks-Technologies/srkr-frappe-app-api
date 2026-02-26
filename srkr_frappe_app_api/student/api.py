@@ -412,3 +412,63 @@ def get_student_attendance(student):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_student_attendance API Error")
         frappe.throw(f"An error occurred: {e}")
+
+@frappe.whitelist()
+def get_my_exam_results():
+    """
+    Automatically identifies the logged-in student and returns their exam results.
+    """
+    student_info = get_student_info()
+    if "student_id" not in student_info:
+        frappe.throw(student_info.get("message", "Could not identify student."))
+    
+    return get_student_exam_results(student_info["student_id"])
+
+@frappe.whitelist()
+def get_student_exam_results(student):
+    """
+    Get all exam semester results for a specific student, including subject-wise results.
+    """
+    if not student:
+        frappe.throw("Parameter 'student' is required.")
+
+    # Fetch the parent documents
+    semester_results = frappe.get_all(
+        "Exam Semester Result",
+        filters={"student": student},
+        fields=[
+            "name", "semester_number", "sgpa", "cgpa", "exam_status", 
+            "total_credits", "credits_secured", "pending_subjects"
+        ],
+        order_by="semester_number asc"
+    )
+
+    if not semester_results:
+        return []
+
+    # Prepare list of result names to fetch child records in bulk
+    result_names = [r["name"] for r in semester_results]
+
+    # Fetch child documents
+    subject_results = frappe.get_all(
+        "Exam Subject Result",
+        filters={"parent": ["in", result_names], "parenttype": "Exam Semester Result", "parentfield": "subjects"},
+        fields=[
+            "parent", "subject_code", "subject_name", "credits", "grade", "result", "exammy", "course"
+        ],
+        order_by="idx asc"
+    )
+
+    # Group subject results by parent
+    from collections import defaultdict
+    subjects_by_parent = defaultdict(list)
+    for sub in subject_results:
+        parent = sub.pop("parent")
+        subjects_by_parent[parent].append(sub)
+
+    # Attach subjects to their respective semester results
+    for sem_result in semester_results:
+        sem_result["subjects"] = subjects_by_parent.get(sem_result["name"], [])
+
+    return semester_results
+
