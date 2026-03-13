@@ -23,6 +23,7 @@ TARGET_STUDENT_GROUP_PATTERNS_FOR_SUMMARIES = [
 
 # NOTE: For instructor reminders, only send notifications for missed attendance
 # that matches one of the following patterns. E.g., ['SEM-01'] for first semester.
+# FALLBACK: Used if SMS Notification Settings are not available.
 ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
     'SEM-01', 'SEM-04', 'SEM-06'
 ]
@@ -31,6 +32,7 @@ ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
 # The logic is: "BTECH" is mandatory (if in list), and at least one other pattern must match.
 # Example: ["BTECH", "SEM-01", "SEM-04"] means: Must have "BTECH" AND (must have "SEM-01" OR "SEM-04").
 # Leave empty to disable filtering (send to all).
+# FALLBACK: Used if SMS Notification Settings are not available.
 DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01", "SEM-04", "SEM-06"]
 
 # NOTE: Get these Template IDs from your SMS provider.
@@ -558,6 +560,30 @@ def send_instructor_attendance_reminders():
     Scheduled function to find instructors with missed attendance for ACTIVE student groups and send a reminder.
     (Optimized Logic with Filtering)
     """
+
+    # --- UI SETTINGS FETCH ---
+    try:
+        sms_settings = frappe.get_single("SMS Notification Settings")
+        if not sms_settings.send_instructor_attendance_reminders:
+            print("Instructor Attendance Reminder SMS is disabled in 'SMS Notification Settings'. Skipping.")
+            return
+        
+        # Load from UI (Checkboxes)
+        instr_category = sms_settings.instructor_attendance_category or "BTECH"
+        instr_semesters = []
+        for i in range(1, 9):
+            fieldname = f"instructor_sem_0{i}"
+            if sms_settings.get(fieldname):
+                instr_semesters.append(f"SEM-0{i}")
+        
+        instr_current_patterns = [instr_category] + instr_semesters
+        print(f"Using UI-configured patterns for instructor reminders: {instr_current_patterns}")
+    except (frappe.DoesNotExistError, Exception):
+        # Fallback to hardcoded constants
+        print("Note: 'SMS Notification Settings' not found or error occurred for instructors. Falling back to hardcoded patterns.")
+        instr_current_patterns = ["BTECH"] + ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS
+    # --------------------------
+
     processing_date = today()
     print(f"--- Running Instructor Attendance Reminder for {processing_date} ---")
 
@@ -610,10 +636,15 @@ def send_instructor_attendance_reminders():
             is_relevant_pending = False
             for schedule in pending_schedule_groups:
                 student_group = schedule.get("student_group")
-                # Check if the group exists and if any active pattern is a substring of the group name
-                if student_group and any(pattern in student_group for pattern in ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS):
-                    is_relevant_pending = True
-                    break # A relevant class was found, no need to check further
+                if student_group:
+                    # Logic: Must have category AND (at least one semester OR no semesters selected)
+                    has_category = instr_current_patterns[0] in student_group if instr_current_patterns else True
+                    other_patterns = instr_current_patterns[1:] if len(instr_current_patterns) > 1 else []
+                    has_other = any(p in student_group for p in other_patterns) if other_patterns else True
+                    
+                    if has_category and has_other:
+                        is_relevant_pending = True
+                        break # A relevant class was found, no need to check further
 
             # If none of the pending classes were for active groups, skip this instructor.
             if not is_relevant_pending:
