@@ -7,6 +7,15 @@ import openpyxl
 from io import BytesIO
 import os
 
+def parse_marks(value):
+    """Returns (float_value, is_absent). Treats 'A', 'a', non-numeric as absent (0, True)."""
+    if value is None:
+        return 0, False
+    try:
+        return float(value), False
+    except (ValueError, TypeError):
+        return 0, True
+
 class SemesterMidtermAssessment(Document):
     def before_save(self):
         for row in self.get("assessment_structure"):
@@ -14,26 +23,43 @@ class SemesterMidtermAssessment(Document):
         self.recalculate_scores()
 
     def recalculate_scores(self):
-        # ... (this function is correct and unchanged) ...
-        student_totals = {row.student: {"mid_1_total": 0, "mid_2_total": 0} for row in self.final_scores_summary}
+        student_totals = {
+            row.student: {
+                "mid_1_total": 0, "mid_2_total": 0,
+                "mid_1_all_absent": True, "mid_2_all_absent": True,
+                "mid_1_has_data": False, "mid_2_has_data": False
+            }
+            for row in self.final_scores_summary
+        }
         structure_midterm_map = {row.name: row.midterm for row in self.assessment_structure}
         for marks_row in self.student_marks_data:
             midterm = structure_midterm_map.get(marks_row.assessment_item)
             student = marks_row.student
             marks = marks_row.marks_obtained or 0
+            absent = marks_row.is_absent
             if student in student_totals:
                 if midterm == "Mid-1":
+                    student_totals[student]["mid_1_has_data"] = True
                     student_totals[student]["mid_1_total"] += marks
+                    if not absent:
+                        student_totals[student]["mid_1_all_absent"] = False
                 elif midterm == "Mid-2":
+                    student_totals[student]["mid_2_has_data"] = True
                     student_totals[student]["mid_2_total"] += marks
+                    if not absent:
+                        student_totals[student]["mid_2_all_absent"] = False
         for summary_row in self.final_scores_summary:
             totals = student_totals.get(summary_row.student)
-            
+
             # If Manual Entry Mode is OFF, overwrite the totals with the calculated sum.
             # If it is ON, we preserve whatever the user typed in the grid.
             if not self.manual_entry_mode and totals:
                 summary_row.mid_1_total = totals["mid_1_total"]
                 summary_row.mid_2_total = totals["mid_2_total"]
+                if totals["mid_1_has_data"]:
+                    summary_row.mid_1_absent = 1 if totals["mid_1_all_absent"] else 0
+                if totals["mid_2_has_data"]:
+                    summary_row.mid_2_absent = 1 if totals["mid_2_all_absent"] else 0
 
             # Always calculate the final weightage based on whatever is in the columns now.
             mid1, mid2 = (summary_row.mid_1_total or 0), (summary_row.mid_2_total or 0)
@@ -176,22 +202,27 @@ def upload_marksheet(file_url, docname):
                 # We update the summary table directly.
                 summary_row = next((r for r in doc.final_scores_summary if r.customer_student_id == str(register_number).strip()), None)
                 if summary_row:
+                    marks_value, is_absent = parse_marks(marks)
                     if descriptive_header_from_excel == "Mid-1 Total":
-                        summary_row.mid_1_total = marks if marks is not None else 0
+                        summary_row.mid_1_total = marks_value
+                        summary_row.mid_1_absent = 1 if is_absent else 0
                     elif descriptive_header_from_excel == "Mid-2 Total":
-                        summary_row.mid_2_total = marks if marks is not None else 0
-            
+                        summary_row.mid_2_total = marks_value
+                        summary_row.mid_2_absent = 1 if is_absent else 0
+
             # --- STANDARD MODE LOGIC ---
             else:
                 # Look up the internal name of the assessment item using the descriptive header.
                 assessment_item_docname = structure_map.get(descriptive_header_from_excel)
-                
+
                 if assessment_item_docname:
+                    marks_value, is_absent = parse_marks(marks)
                     # Add a new row to the hidden "Student Marks Data" table.
                     doc.append("student_marks_data", {
                         "student": student_docname,
                         "assessment_item": assessment_item_docname,
-                        "marks_obtained": marks if marks is not None else 0
+                        "marks_obtained": marks_value,
+                        "is_absent": 1 if is_absent else 0
                     })
     
     # Save the document. This will trigger the `before_save` hook, which runs the

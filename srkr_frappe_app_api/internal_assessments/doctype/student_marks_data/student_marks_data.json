@@ -8,7 +8,8 @@
  "field_order": [
   "student",
   "assessment_item",
-  "marks_obtained"
+  "marks_obtained",
+  "is_absent"
  ],
  "fields": [
   {
@@ -29,6 +30,12 @@
    "fieldname": "marks_obtained",
    "fieldtype": "Float",
    "label": "Marks Obtained"
+  },
+  {
+   "fieldname": "is_absent",
+   "fieldtype": "Check",
+   "label": "Is Absent",
+   "default": "0"
   }
  ],
  "hidden": 1,

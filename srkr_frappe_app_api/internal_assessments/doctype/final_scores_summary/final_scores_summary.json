@@ -10,7 +10,9 @@
         "student_name",
         "customer_student_id",
         "mid_1_total",
+        "mid_1_absent",
         "mid_2_total",
+        "mid_2_absent",
         "total_internal_marks"
     ],
     "fields": [
@@ -43,10 +45,24 @@
             "label": "Mid-1 Total"
         },
         {
+            "fieldname": "mid_1_absent",
+            "fieldtype": "Check",
+            "label": "Mid-1 Absent",
+            "default": "0",
+            "read_only": 1
+        },
+        {
             "fieldname": "mid_2_total",
             "fieldtype": "Float",
             "in_list_view": 1,
             "label": "Mid-2 Total"
+        },
+        {
+            "fieldname": "mid_2_absent",
+            "fieldtype": "Check",
+            "label": "Mid-2 Absent",
+            "default": "0",
+            "read_only": 1
         },
         {
             "fieldname": "total_internal_marks",

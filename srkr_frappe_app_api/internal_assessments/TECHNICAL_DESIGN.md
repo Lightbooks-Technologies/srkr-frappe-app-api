@@ -35,14 +35,17 @@ The DocType consists of three main child tables and a control field:
 *   **Fields**:
     *   `student`: Link to the Student.
     *   `assessment_item`: Link to the specific row in the `Assessment Structure`.
-    *   `marks_obtained`: The actual score given.
+    *   `marks_obtained`: The actual score given (stored as 0 if absent).
+    *   `is_absent` (Check): Set to 1 when the student was absent for this question. Stored separately from `marks_obtained` so absent can be distinguished from a genuine score of zero.
 
 #### 4. Final Scores Summary (`final_scores_summary`)
 *   **Purpose**: Displays the calculated totals for the user. This is what the faculty sees.
 *   **Fields**:
     *   `student`: Link to the Student.
-    *   `mid_1_total`: Sum of all marks tagged as "Mid-1" (or manually entered).
-    *   `mid_2_total`: Sum of all marks tagged as "Mid-2" (or manually entered).
+    *   `mid_1_total`: Sum of all marks tagged as "Mid-1" (or manually entered). Stored as 0 if absent.
+    *   `mid_1_absent` (Check): Set to 1 if the student was absent for the entire Mid-1 (i.e. all Mid-1 question rows are marked absent in Standard Mode, or "A" was entered in the Mid-1 Total column in Manual Mode).
+    *   `mid_2_total`: Sum of all marks tagged as "Mid-2" (or manually entered). Stored as 0 if absent.
+    *   `mid_2_absent` (Check): Same as `mid_1_absent` but for Mid-2.
     *   `total_internal_marks`: The final calculated score based on the logic described below.
 
 ---
@@ -68,12 +71,22 @@ This function is triggered on `before_save`. It employs a "Smart Fallback" logic
     *   When **ON**: The `Mid-1 Total` and `Mid-2 Total` columns are unlocked (Editable).
     *   When **OFF**: The columns are locked (Read-Only) to prevent misleading manual edits that would be overwritten on save.
 
-### 3. Excel Integration
+### 3. Absent Marking
+Students can be marked absent by entering `A` (case-insensitive) in any Excel cell instead of a numeric score.
+
+*   **How it works**: The `parse_marks()` helper function intercepts any non-numeric cell value and returns `(0, is_absent=True)`. The numeric value stored in the DB is always `0`; the absent flag is stored separately.
+*   **Standard Mode**: If `A` is entered for every question in a midterm, `recalculate_scores()` sets `mid_1_absent` or `mid_2_absent = 1` on the summary row. If even one question has a numeric score, the absent flag is not set.
+*   **Manual Mode**: If `A` is entered in the "Mid-1 Total" or "Mid-2 Total" column, the corresponding absent flag is set directly on the summary row.
+*   **Report**: The `Semester Midterm Assessment Report` displays `A` in any cell where the absent flag is set, and numeric values everywhere else. This distinguishes a genuine score of zero from an absent.
+*   **Formula**: Absent is treated as 0 for the final marks calculation (`0.8 * Best + 0.2 * Other`).
+
+### 4. Excel Integration
 The module relies on Excel for bulk data entry of granular marks.
 
 *   **Template Generation**: Creates an Excel file with columns for every item in the `Assessment Structure`.
 *   **Upload Process**:
     *   Parses the uploaded Excel file.
+    *   Cells containing `A` (or any non-numeric value) are treated as absent — stored as `marks_obtained = 0` with `is_absent = 1`.
     *   Populates the `student_marks_data` table.
     *   **Note**: If you upload an Excel sheet while in "Manual Mode", the granular data will be saved in the background, but the Totals will **not** update until you turn "Manual Mode" **OFF** and save.
 
@@ -87,8 +100,9 @@ The module relies on Excel for bulk data entry of granular marks.
 
 ### Key Python Functions
 *   `get_default_assessment_structure()`: Returns the hardcoded list of default questions.
-*   `recalculate_scores(self)`: The main logic engine. Contains the conditional logic for Manual vs. Automatic calculation.
-*   `upload_marksheet(file_url, docname)`: Handles the parsing of the Excel file and data mapping.
+*   `parse_marks(value)`: Module-level helper. Converts any cell value to `(float, is_absent)`. Non-numeric values (e.g. `"A"`) return `(0, True)`.
+*   `recalculate_scores(self)`: The main logic engine. Contains the conditional logic for Manual vs. Automatic calculation. Also propagates `mid_1_absent`/`mid_2_absent` flags to the summary table.
+*   `upload_marksheet(file_url, docname)`: Handles the parsing of the Excel file and data mapping. Uses `parse_marks()` to handle absent cells.
 
 ---
 

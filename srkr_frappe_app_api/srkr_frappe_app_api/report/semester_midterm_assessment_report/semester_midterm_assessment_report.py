@@ -9,7 +9,7 @@ def execute(filters=None):
         return [], []
 
     assessment_doc_name = filters.get("assessment")
-    
+
     try:
         doc = frappe.get_doc("Semester Midterm Assessment", assessment_doc_name)
     except frappe.DoesNotExistError:
@@ -21,7 +21,7 @@ def execute(filters=None):
         {"fieldname": "register_number", "label": "Register Number", "fieldtype": "Data", "width": 150},
         {"fieldname": "student_name", "label": "Student Name", "fieldtype": "Data", "width": 250},
     ]
-    
+
     # This will hold the mapping from the descriptive header to a simplified fieldname for the report
     column_header_to_fieldname = {}
 
@@ -35,25 +35,32 @@ def execute(filters=None):
         columns.append({
             "fieldname": fieldname,
             "label": descriptive_header,
-            "fieldtype": "Float",
+            "fieldtype": "Data",  # Data instead of Float so we can display "A" for absent
             "width": 120
         })
         column_header_to_fieldname[descriptive_header] = fieldname
 
+    # Add summary columns at the end
+    columns.extend([
+        {"fieldname": "mid_1_total", "label": "Mid-1 Total", "fieldtype": "Data", "width": 100},
+        {"fieldname": "mid_2_total", "label": "Mid-2 Total", "fieldtype": "Data", "width": 100},
+        {"fieldname": "total_internal_marks", "label": "Total Internal Marks", "fieldtype": "Float", "width": 120, "bold": 1},
+    ])
+
     # --- Step 3: Fetch and Prepare the Raw Marks Data for Fast Lookup ---
-    
+
     # Fetch all raw marks for this assessment in one query
     raw_marks = frappe.get_all(
         "Student Marks Data",
         filters={"parent": doc.name},
-        fields=["student", "assessment_item", "marks_obtained"]
+        fields=["student", "assessment_item", "marks_obtained", "is_absent"]
     )
 
     # Create a map of assessment item's internal name to its descriptive header
     item_name_to_header_map = {item.name: f"{item.midterm}-{item.assessment_type}-{item.question_id}" for item in doc.assessment_structure}
 
-    # Create the main data map: {student: {descriptive_header: marks}}
-    # e.g., {'EDU-STU-001': {'Mid-1-Objective-Q1': 2.0, ...}}
+    # Create the main data map: {student: {descriptive_header: display_value}}
+    # Absent cells store "A", present cells store the numeric value
     marks_map = {}
     for mark in raw_marks:
         student_name = mark.get("student")
@@ -62,10 +69,10 @@ def execute(filters=None):
 
         if student_name not in marks_map:
             marks_map[student_name] = {}
-        
+
         descriptive_header = item_name_to_header_map.get(item_name)
         if descriptive_header:
-            marks_map[student_name][descriptive_header] = marks
+            marks_map[student_name][descriptive_header] = "A" if mark.get("is_absent") else marks
 
     # --- Step 4: Build the Final Report Rows ---
     data = []
@@ -77,11 +84,16 @@ def execute(filters=None):
         }
 
         student_marks = marks_map.get(student_summary.student, {})
-        
+
         # Loop through our dynamically created columns and fill in the marks
         for header, fieldname in column_header_to_fieldname.items():
             row[fieldname] = student_marks.get(header, 0)
-        
+
+        # Summary columns — show "A" if absent, otherwise show the numeric total
+        row["mid_1_total"] = "A" if student_summary.mid_1_absent else (student_summary.mid_1_total or 0)
+        row["mid_2_total"] = "A" if student_summary.mid_2_absent else (student_summary.mid_2_total or 0)
+        row["total_internal_marks"] = student_summary.total_internal_marks or 0
+
         data.append(row)
 
     return columns, data
