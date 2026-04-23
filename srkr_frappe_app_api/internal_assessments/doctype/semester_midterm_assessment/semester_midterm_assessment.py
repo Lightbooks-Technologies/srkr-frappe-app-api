@@ -61,6 +61,10 @@ class SemesterMidtermAssessment(Document):
                 if totals["mid_2_has_data"]:
                     summary_row.mid_2_absent = 1 if totals["mid_2_all_absent"] else 0
 
+            # Update display fields so the child table list view shows "A" or the numeric value.
+            summary_row.mid_1_display = "A" if summary_row.mid_1_absent else str(int(summary_row.mid_1_total or 0))
+            summary_row.mid_2_display = "A" if summary_row.mid_2_absent else str(int(summary_row.mid_2_total or 0))
+
             # Always calculate the final weightage based on whatever is in the columns now.
             mid1, mid2 = (summary_row.mid_1_total or 0), (summary_row.mid_2_total or 0)
             higher_score, lower_score = max(mid1, mid2), min(mid1, mid2)
@@ -206,9 +210,11 @@ def upload_marksheet(file_url, docname):
                     if descriptive_header_from_excel == "Mid-1 Total":
                         summary_row.mid_1_total = marks_value
                         summary_row.mid_1_absent = 1 if is_absent else 0
+                        summary_row.mid_1_display = "A" if is_absent else str(int(marks_value))
                     elif descriptive_header_from_excel == "Mid-2 Total":
                         summary_row.mid_2_total = marks_value
                         summary_row.mid_2_absent = 1 if is_absent else 0
+                        summary_row.mid_2_display = "A" if is_absent else str(int(marks_value))
 
             # --- STANDARD MODE LOGIC ---
             else:

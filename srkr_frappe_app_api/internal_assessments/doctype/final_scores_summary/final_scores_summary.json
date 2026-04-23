@@ -11,8 +11,10 @@
         "customer_student_id",
         "mid_1_total",
         "mid_1_absent",
+        "mid_1_display",
         "mid_2_total",
         "mid_2_absent",
+        "mid_2_display",
         "total_internal_marks"
     ],
     "fields": [
@@ -41,7 +43,6 @@
         {
             "fieldname": "mid_1_total",
             "fieldtype": "Float",
-            "in_list_view": 1,
             "label": "Mid-1 Total"
         },
         {
@@ -52,9 +53,15 @@
             "read_only": 1
         },
         {
+            "fieldname": "mid_1_display",
+            "fieldtype": "Data",
+            "in_list_view": 1,
+            "label": "Mid-1 Total",
+            "read_only": 1
+        },
+        {
             "fieldname": "mid_2_total",
             "fieldtype": "Float",
-            "in_list_view": 1,
             "label": "Mid-2 Total"
         },
         {
@@ -65,8 +72,15 @@
             "read_only": 1
         },
         {
+            "fieldname": "mid_2_display",
+            "fieldtype": "Data",
+            "in_list_view": 1,
+            "label": "Mid-2 Total",
+            "read_only": 1
+        },
+        {
             "fieldname": "total_internal_marks",
-            "fieldtype": "Float",
+            "fieldtype": "Int",
             "in_list_view": 1,
             "label": "Total Internal Marks",
             "read_only": 1,
