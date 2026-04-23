@@ -131,8 +131,8 @@ def generate_marksheet_template(docname):
         # In Manual Mode, we only need the totals.
         descriptive_headers = ["Mid-1 Total", "Mid-2 Total"]
     else:
-        # In Standard Mode, we need the full breakdown.
-        descriptive_headers = [f"{row.midterm}-{row.assessment_type}-{row.question_id}" for row in doc.assessment_structure]
+        # In Standard Mode, full breakdown plus absent columns at the start of each midterm group.
+        descriptive_headers = ["Mid-1 Absent", "Mid-2 Absent"] + [f"{row.midterm}-{row.assessment_type}-{row.question_id}" for row in doc.assessment_structure]
     
     headers.extend(descriptive_headers)
     sheet.append(headers)
@@ -178,34 +178,34 @@ def upload_marksheet(file_url, docname):
     # Create maps for faster lookups during processing.
     student_map = {row.customer_student_id: row.student for row in doc.final_scores_summary}
     structure_map = {f"{row.midterm}-{row.assessment_type}-{row.question_id}": row.name for row in doc.assessment_structure}
-    
+    # Map midterm label to all its assessment item docnames, used when marking whole midterm absent.
+    midterm_items_map = {}
+    for row in doc.assessment_structure:
+        midterm_items_map.setdefault(row.midterm, []).append(row.name)
+
     # Clear any old data before importing the new marks, BUT ONLY IF IN STANDARD MODE.
     # In Manual Mode, we want to preserve the underlying granular data.
     if not doc.manual_entry_mode:
         doc.student_marks_data = []
-    
+
     # Loop through the Excel rows, starting from the second row (to skip the header).
     for row_index in range(2, sheet.max_row + 1):
         register_number = sheet.cell(row=row_index, column=1).value
-        if not register_number: 
+        if not register_number:
             continue # Skip empty rows
 
         student_docname = student_map.get(str(register_number).strip())
-        if not student_docname: 
+        if not student_docname:
             # This student is in the Excel file but not in the official roster. Skip them.
             continue
 
-        # Loop through the question columns in the Excel file.
-        for col_index in range(3, len(header) + 1):
-            descriptive_header_from_excel = header[col_index - 1]
-            marks = sheet.cell(row=row_index, column=col_index).value
-            
-            # --- MANUAL ENTRY MODE LOGIC ---
-            if doc.manual_entry_mode:
-                # In Manual Mode, we expect headers "Mid-1 Total" and "Mid-2 Total"
-                # We update the summary table directly.
-                summary_row = next((r for r in doc.final_scores_summary if r.customer_student_id == str(register_number).strip()), None)
-                if summary_row:
+        # --- MANUAL ENTRY MODE LOGIC ---
+        if doc.manual_entry_mode:
+            summary_row = next((r for r in doc.final_scores_summary if r.customer_student_id == str(register_number).strip()), None)
+            if summary_row:
+                for col_index in range(3, len(header) + 1):
+                    descriptive_header_from_excel = header[col_index - 1]
+                    marks = sheet.cell(row=row_index, column=col_index).value
                     marks_value, is_absent = parse_marks(marks)
                     if descriptive_header_from_excel == "Mid-1 Total":
                         summary_row.mid_1_total = marks_value
@@ -216,20 +216,44 @@ def upload_marksheet(file_url, docname):
                         summary_row.mid_2_absent = 1 if is_absent else 0
                         summary_row.mid_2_display = "A" if is_absent else str(int(marks_value))
 
-            # --- STANDARD MODE LOGIC ---
-            else:
-                # Look up the internal name of the assessment item using the descriptive header.
-                assessment_item_docname = structure_map.get(descriptive_header_from_excel)
+        # --- STANDARD MODE LOGIC ---
+        else:
+            # First pass: read the absent flags for this student row.
+            absent_flags = {"Mid-1": False, "Mid-2": False}
+            for col_index in range(3, len(header) + 1):
+                col_header = header[col_index - 1]
+                cell_value = sheet.cell(row=row_index, column=col_index).value
+                if col_header == "Mid-1 Absent":
+                    _, absent_flags["Mid-1"] = parse_marks(cell_value)
+                elif col_header == "Mid-2 Absent":
+                    _, absent_flags["Mid-2"] = parse_marks(cell_value)
 
-                if assessment_item_docname:
-                    marks_value, is_absent = parse_marks(marks)
-                    # Add a new row to the hidden "Student Marks Data" table.
-                    doc.append("student_marks_data", {
-                        "student": student_docname,
-                        "assessment_item": assessment_item_docname,
-                        "marks_obtained": marks_value,
-                        "is_absent": 1 if is_absent else 0
-                    })
+            # Second pass: process question columns.
+            for col_index in range(3, len(header) + 1):
+                descriptive_header_from_excel = header[col_index - 1]
+
+                # Skip the absent flag columns — they're not question marks.
+                if descriptive_header_from_excel in ("Mid-1 Absent", "Mid-2 Absent"):
+                    continue
+
+                assessment_item_docname = structure_map.get(descriptive_header_from_excel)
+                if not assessment_item_docname:
+                    continue
+
+                marks = sheet.cell(row=row_index, column=col_index).value
+                marks_value, is_absent = parse_marks(marks)
+
+                # If the whole midterm is marked absent via the absent column, override.
+                midterm_for_item = next((row.midterm for row in doc.assessment_structure if row.name == assessment_item_docname), None)
+                if absent_flags.get(midterm_for_item):
+                    marks_value, is_absent = 0, True
+
+                doc.append("student_marks_data", {
+                    "student": student_docname,
+                    "assessment_item": assessment_item_docname,
+                    "marks_obtained": marks_value,
+                    "is_absent": 1 if is_absent else 0
+                })
     
     # Save the document. This will trigger the `before_save` hook, which runs the
     # `recalculate_scores` function to update the final summary table.

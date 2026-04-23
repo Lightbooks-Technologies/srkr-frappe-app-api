@@ -75,8 +75,9 @@ This function is triggered on `before_save`. It employs a "Smart Fallback" logic
 Students can be marked absent by entering `A` (case-insensitive) in any Excel cell instead of a numeric score.
 
 *   **How it works**: The `parse_marks()` helper function intercepts any non-numeric cell value and returns `(0, is_absent=True)`. The numeric value stored in the DB is always `0`; the absent flag is stored separately.
-*   **Standard Mode**: If `A` is entered for every question in a midterm, `recalculate_scores()` sets `mid_1_absent` or `mid_2_absent = 1` on the summary row. If even one question has a numeric score, the absent flag is not set.
+*   **Standard Mode**: The template includes dedicated **`Mid-1 Absent`** and **`Mid-2 Absent`** columns. Entering `A` in one of these columns marks the student absent for that entire midterm — all individual question marks for that midterm are automatically set to absent during upload. Faculty does not need to type `A` in each question column.
 *   **Manual Mode**: If `A` is entered in the "Mid-1 Total" or "Mid-2 Total" column, the corresponding absent flag is set directly on the summary row.
+*   **Display**: The `final_scores_summary` child table shows `A` (via the `mid_1_display`/`mid_2_display` Data fields) instead of `0` for absent students. The underlying Float fields (`mid_1_total`, `mid_2_total`) are hidden and store `0` for calculation purposes.
 *   **Report**: The `Semester Midterm Assessment Report` displays `A` in any cell where the absent flag is set, and numeric values everywhere else. This distinguishes a genuine score of zero from an absent.
 *   **Formula**: Absent is treated as 0 for the final marks calculation (`0.8 * Best + 0.2 * Other`).
 
@@ -84,9 +85,12 @@ Students can be marked absent by entering `A` (case-insensitive) in any Excel ce
 The module relies on Excel for bulk data entry of granular marks.
 
 *   **Template Generation**: Creates an Excel file with columns for every item in the `Assessment Structure`.
+    *   **Standard Mode template**: Includes `Mid-1 Absent`, `Mid-2 Absent` columns followed by all individual question columns.
+    *   **Manual Mode template**: Includes only `Mid-1 Total` and `Mid-2 Total` columns.
 *   **Upload Process**:
     *   Parses the uploaded Excel file.
     *   Cells containing `A` (or any non-numeric value) are treated as absent — stored as `marks_obtained = 0` with `is_absent = 1`.
+    *   In Standard Mode, if `Mid-1 Absent` or `Mid-2 Absent` is set to `A` for a student, all question marks for that midterm are overridden to absent regardless of what is in the individual question cells.
     *   Populates the `student_marks_data` table.
     *   **Note**: If you upload an Excel sheet while in "Manual Mode", the granular data will be saved in the background, but the Totals will **not** update until you turn "Manual Mode" **OFF** and save.
 
@@ -133,3 +137,28 @@ The module relies on Excel for bulk data entry of granular marks.
     *   For this to work we have to save the doc first and make sure it in draft state.
     *   It respects the current state of the `manual_entry_mode` toggle.
     *   Useful if you suspect the totals are out of sync or if you want to force a refresh after toggling modes without editing any fields.
+
+### 5. Absent Marking — Testing Scenarios
+
+#### Manual Mode
+| Scenario | Excel Input | Expected Result |
+|---|---|---|
+| Student present for both | Mid-1 Total = `10`, Mid-2 Total = `6` | Mid-1: `10`, Mid-2: `6`, Total: `9` |
+| Student absent for Mid-1 | Mid-1 Total = `A`, Mid-2 Total = `6` | Mid-1: `A`, Mid-2: `6`, Total: `5` |
+| Student absent for Mid-2 | Mid-1 Total = `10`, Mid-2 Total = `A` | Mid-1: `10`, Mid-2: `A`, Total: `8` |
+| Student absent for both | Mid-1 Total = `A`, Mid-2 Total = `A` | Mid-1: `A`, Mid-2: `A`, Total: `0` |
+| Blank cell | Mid-1 Total = _(empty)_ | Treated as `0`, not absent |
+
+#### Standard Mode
+| Scenario | Excel Input | Expected Result |
+|---|---|---|
+| Student present, scores entered per question | Numeric values in all question columns | Totals summed, displayed as numbers |
+| Student absent for Mid-1 | `A` in `Mid-1 Absent` column | All Mid-1 question marks set to absent, Mid-1 display: `A` |
+| Student absent for Mid-2 | `A` in `Mid-2 Absent` column | All Mid-2 question marks set to absent, Mid-2 display: `A` |
+| Student absent for both | `A` in both absent columns | Both midterms absent, Total: `0` |
+| Mixed: absent flag + numeric in questions | `A` in `Mid-1 Absent`, numeric in Mid-1 question cells | Absent flag takes precedence — all Mid-1 questions overridden to absent |
+
+#### Formula Verification
+*   Present for both: `max(10, 6) = 10 (best)`, `min(10, 6) = 6 (other)` → `round(0.8×10 + 0.2×6) = 9`
+*   Absent for Mid-2 (scored 10 in Mid-1): `max(10, 0) = 10`, `min(10, 0) = 0` → `round(0.8×10 + 0.2×0) = 8`
+*   Absent for both: `max(0, 0) = 0` → `0`

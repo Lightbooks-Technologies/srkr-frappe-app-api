@@ -43,14 +43,16 @@
         {
             "fieldname": "mid_1_total",
             "fieldtype": "Float",
-            "label": "Mid-1 Total"
+            "label": "Mid-1 Total",
+            "hidden": 1
         },
         {
             "fieldname": "mid_1_absent",
             "fieldtype": "Check",
             "label": "Mid-1 Absent",
             "default": "0",
-            "read_only": 1
+            "read_only": 1,
+            "hidden": 1
         },
         {
             "fieldname": "mid_1_display",
@@ -62,14 +64,16 @@
         {
             "fieldname": "mid_2_total",
             "fieldtype": "Float",
-            "label": "Mid-2 Total"
+            "label": "Mid-2 Total",
+            "hidden": 1
         },
         {
             "fieldname": "mid_2_absent",
             "fieldtype": "Check",
             "label": "Mid-2 Absent",
             "default": "0",
-            "read_only": 1
+            "read_only": 1,
+            "hidden": 1
         },
         {
             "fieldname": "mid_2_display",
