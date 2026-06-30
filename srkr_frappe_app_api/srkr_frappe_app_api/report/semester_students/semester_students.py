@@ -29,6 +29,12 @@ def get_columns():
 			"width": 220,
 		},
 		{
+			"fieldname": "student_phone_number",
+			"label": _("Student Phone Number"),
+			"fieldtype": "Data",
+			"width": 170,
+		},
+		{
 			"fieldname": "father_phone_number",
 			"label": _("Father Phone Number"),
 			"fieldtype": "Data",
@@ -74,6 +80,7 @@ def get_data(filters):
 		f"""
 		SELECT
 			s.student_name,
+			s.student_mobile_number AS student_phone_number,
 			s.custom_father_mobile_number AS father_phone_number,
 			s.custom_student_id AS student_id,
 			s.gender,
