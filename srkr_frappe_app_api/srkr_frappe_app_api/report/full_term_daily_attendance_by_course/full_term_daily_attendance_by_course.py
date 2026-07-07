@@ -17,9 +17,45 @@ FIRST_YEAR_SEMESTER_PATTERNS = ["SEM-01", "SEM-02"]
 
 # ====================================================================
 
+TEACHING_ROLE_PROFILE = "SRKR Teaching Employee Profile"
+
+
+def is_teaching_staff():
+    user = frappe.session.user
+    if user in ("Administrator", "Guest"):
+        return False
+    return frappe.db.get_value("User", user, "role_profile_name") == TEACHING_ROLE_PROFILE
+
+
+def get_current_instructor():
+    user = frappe.session.user
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        return None
+    return frappe.db.get_value("Instructor", {"employee": employee}, "name")
+
+
+def get_instructor_allowed_groups(instructor):
+    """Return set of student_group names the instructor has Course Schedules in."""
+    if not instructor:
+        return None
+    rows = frappe.db.sql("""
+        SELECT DISTINCT student_group
+        FROM `tabCourse Schedule`
+        WHERE instructor = %(instructor)s
+    """, {"instructor": instructor}, as_list=True)
+    return {r[0] for r in rows}
+
+
 def execute(filters=None):
     if not filters or not filters.get("student_group") or not filters.get("course"):
         return [], []
+
+    if is_teaching_staff():
+        instructor = get_current_instructor()
+        allowed = get_instructor_allowed_groups(instructor)
+        if allowed is not None and filters.get("student_group") not in allowed:
+            frappe.throw(_("You are not authorised to view attendance for this student group."))
 
     columns = get_columns(filters)
     if not columns:
@@ -209,19 +245,43 @@ def get_data(filters, columns):
     return final_data
 
 @frappe.whitelist()
+def get_instructor_allowed_groups_api():
+    """
+    Returns the list of student group names the current instructor teaches.
+    Returns None for non-teaching-staff (no restriction).
+    """
+    if not is_teaching_staff():
+        return None
+    instructor = get_current_instructor()
+    allowed = get_instructor_allowed_groups(instructor)
+    return list(allowed) if allowed is not None else []
+
+
+@frappe.whitelist()
 def get_courses_for_student_group(student_group):
     """
     A whitelisted API to fetch courses for the dynamic filter.
+    For teaching staff, only returns courses they personally teach in that group.
     """
     if not student_group:
         return []
-    
+
+    conditions = ["cs.student_group = %(student_group)s"]
+    values = {"student_group": student_group}
+
+    if is_teaching_staff():
+        instructor = get_current_instructor()
+        if instructor:
+            conditions.append("cs.instructor = %(instructor)s")
+            values["instructor"] = instructor
+
+    where = " AND ".join(conditions)
+
     courses = frappe.db.sql("""
         SELECT DISTINCT cs.course, c.course_name
         FROM `tabCourse Schedule` AS cs
         JOIN `tabCourse` AS c ON cs.course = c.name
-        WHERE 
-            cs.student_group = %(student_group)s
-    """, {"student_group": student_group}, as_dict=1)
-    
+        WHERE {where}
+    """.format(where=where), values, as_dict=1)
+
     return [{"value": c.course, "label": f"{c.course_name} ({c.course})"} for c in courses]
