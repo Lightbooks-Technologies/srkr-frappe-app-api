@@ -245,19 +245,6 @@ def get_data(filters, columns):
     return final_data
 
 @frappe.whitelist()
-def get_instructor_allowed_groups_api():
-    """
-    Returns the list of student group names the current instructor teaches.
-    Returns None for non-teaching-staff (no restriction).
-    """
-    if not is_teaching_staff():
-        return None
-    instructor = get_current_instructor()
-    allowed = get_instructor_allowed_groups(instructor)
-    return list(allowed) if allowed is not None else []
-
-
-@frappe.whitelist()
 def get_courses_for_student_group(student_group):
     """
     A whitelisted API to fetch courses for the dynamic filter.

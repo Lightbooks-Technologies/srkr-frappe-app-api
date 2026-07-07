@@ -2,29 +2,6 @@
 // For license information, please see license.txt
 
 frappe.query_reports["Full Term Daily Attendance by Course"] = {
-    _allowed_groups: null,  // null = no restriction, [...] = allowed group names
-
-    onload: function (report) {
-        let me = this;
-        frappe.xcall(
-            "srkr_frappe_app_api.srkr_frappe_app_api.report.full_term_daily_attendance_by_course.full_term_daily_attendance_by_course.get_instructor_allowed_groups_api"
-        ).then(groups => {
-            me._allowed_groups = groups;
-
-            // For teaching staff, convert Student Group to a Select with their groups pre-loaded
-            if (groups !== null) {
-                try {
-                    let sg_filter = report.get_filter("student_group");
-                    sg_filter.df.fieldtype = "Select";
-                    sg_filter.df.options = [""].concat(groups);
-                    sg_filter.refresh();
-                } catch (e) {
-                    // Filter not available (e.g. user navigated away before response returned)
-                }
-            }
-        });
-    },
-
     "filters": [
         {
             "fieldname": "student_group",
@@ -65,8 +42,8 @@ frappe.query_reports["Full Term Daily Attendance by Course"] = {
         {
             "fieldname": "course",
             "label": __("Course"),
-            "fieldtype": "Select", // Use Select for dynamically loaded options
-            "options": [], // Initially empty, will be populated by the on_change event
+            "fieldtype": "Select",
+            "options": [],
             "reqd": 1
         },
         {
