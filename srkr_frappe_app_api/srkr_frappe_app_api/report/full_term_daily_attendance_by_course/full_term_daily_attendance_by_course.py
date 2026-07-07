@@ -259,6 +259,9 @@ def get_courses_for_student_group(student_group):
     if is_teaching_staff():
         instructor = get_current_instructor()
         if instructor:
+            allowed = get_instructor_allowed_groups(instructor)
+            if allowed is not None and student_group not in allowed:
+                return {"error": "not_authorised"}
             conditions.append("cs.instructor = %(instructor)s")
             values["instructor"] = instructor
 

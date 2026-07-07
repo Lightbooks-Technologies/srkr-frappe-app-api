@@ -27,8 +27,9 @@ frappe.query_reports["Full Term Daily Attendance by Course"] = {
                             student_group: student_group
                         },
                         callback: function (r) {
-                            if (r.message && r.message.length > 0) {
-                                // Update the 'options' of the course filter
+                            if (r.message && r.message.error === "not_authorised") {
+                                frappe.msgprint(__("You are not assigned to teach this student group."));
+                            } else if (r.message && r.message.length > 0) {
                                 course_filter.df.options = r.message;
                                 course_filter.refresh();
                             } else {
