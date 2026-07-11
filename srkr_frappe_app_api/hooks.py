@@ -182,7 +182,15 @@ scheduler_events = {
             "srkr_frappe_app_api.srkr_frappe_app_api.report.daily_attendance_status.daily_attendance_status.send_daily_attendance_report_to_main_admin"
         ],
         "20 17 * * *": [
-            "srkr_frappe_app_api.instructor.api.sync_external_attendance" 
+            "srkr_frappe_app_api.instructor.api.sync_external_attendance"
+        ],
+        # srkr_reports summary refresh for the external academics portal:
+        # incremental every 20 min, full rebuild + delete reconciliation at 2 AM
+        "*/20 * * * *": [
+            "srkr_frappe_app_api.srkr_reports_sync.tasks.incremental_refresh"
+        ],
+        "0 2 * * *": [
+            "srkr_frappe_app_api.srkr_reports_sync.tasks.nightly_full_rebuild"
         ]
     }
 # 	"hourly": [
