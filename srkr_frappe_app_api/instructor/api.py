@@ -341,11 +341,26 @@ def mark_attendances(
     if not isinstance(course_schedules, list):
         course_schedules = [course_schedules]
 
+    from srkr_frappe_app_api.instructor.bulk_attendance import bulk_enabled, bulk_mark_class
+
     for cs_id in course_schedules:
-        for d in present:
-            make_attendance_records(d["student"], d["student_name"], "Present", cs_id, student_group, date)
-        for d in absent:
-            make_attendance_records(d["student"], d["student_name"], "Absent", cs_id, student_group, date)
+        if bulk_enabled() and cs_id:
+            # Fast path: one validation pass + one bulk INSERT per class
+            # (legacy loop below did a full doc lifecycle per student —
+            # measured 4.4s avg / 34s worst per submit in prod).
+            entries = [
+                {"student": d["student"], "student_name": d.get("student_name"), "status": "Present"}
+                for d in present
+            ] + [
+                {"student": d["student"], "student_name": d.get("student_name"), "status": "Absent"}
+                for d in absent
+            ]
+            bulk_mark_class(cs_id, student_group, date, entries)
+        else:
+            for d in present:
+                make_attendance_records(d["student"], d["student_name"], "Present", cs_id, student_group, date)
+            for d in absent:
+                make_attendance_records(d["student"], d["student_name"], "Absent", cs_id, student_group, date)
 
         if cs_id and topics_object_list:
             try:
