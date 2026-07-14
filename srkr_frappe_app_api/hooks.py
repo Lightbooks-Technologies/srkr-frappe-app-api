@@ -166,6 +166,13 @@ scheduler_events = {
 		"srkr_frappe_app_api.examination.tasks.sync_all_active_students"
 	],
     "cron": {
+        # DeployU connector — nightly one-way sync (roster, results, attendance)
+        # at 03:00, after the 02:00 srkr_reports full rebuild so summaries are
+        # fresh. Config: deployu_* keys in site_config.json; no-op unless
+        # deployu_sync_enabled=1.
+        "0 3 * * *": [
+            "srkr_frappe_app_api.deployu_connector.tasks.nightly_sync"
+        ],
         # This is your existing job that runs at 6:00 PM
         "0 18 * * *": [
             "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
