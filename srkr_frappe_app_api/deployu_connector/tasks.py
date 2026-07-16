@@ -1,6 +1,7 @@
 """DeployU Connector — nightly one-way sync: ERP -> DeployU LMS.
 
-Pushes roster (+ promotions), university results and per-course attendance to
+Pushes academic structure (years/terms/programs/batches/sections/schedule),
+roster (+ promotions), university results and per-course attendance to
 the DeployU ingest APIs. ERP is source of truth; DeployU mirrors, never writes back.
 
 Configuration (site_config.json):
@@ -83,6 +84,152 @@ def _log_run(kind, sent, response, errors):
     frappe.logger("deployu").info(
         json.dumps({"job": kind, "sent": sent, "response": response, "errors": errors[:10]})
     )
+
+
+# --------------------------------------------------------------------------
+# 0. structure (academic years/terms, programs, batches, sections, schedule)
+# --------------------------------------------------------------------------
+# Mirrors the college's academic skeleton so nothing structural is hand-loaded:
+# new AY/term -> semesters appear; new intake batch -> batch + mapping appear;
+# new section -> group + mapping appear; new course schedule -> subject +
+# instructor account + teaching assignment appear. Everything is an idempotent
+# upsert on the DeployU side; kinds with a stable `modified` are watermarked,
+# small dimension tables (years/terms/programs) are sent in full each night.
+
+def _post_kind(cfg, kind, rows, errors):
+    resp = {}
+    for chunk in _chunks(rows):
+        resp = _post(cfg, "/api/admin/college/sync-structure",
+                     {"college_slug": cfg["slug"], "kind": kind, "rows": chunk})
+        if isinstance(resp, dict):
+            errors += resp.get("errors", [])
+    return resp
+
+
+def sync_structure(cfg=None):
+    cfg = cfg or _cfg()
+    errors = []
+    sent = {}
+
+    # -- academic years + terms (tiny; full send, order matters: years first) --
+    ays = frappe.db.sql(
+        """SELECT name, year_start_date AS start_date, year_end_date AS end_date
+           FROM `tabAcademic Year` ORDER BY year_start_date""",
+        as_dict=True,
+    )
+    for r in ays:
+        r["start_date"], r["end_date"] = str(r["start_date"] or ""), str(r["end_date"] or "")
+    if ays:
+        _post_kind(cfg, "academic_years", ays, errors)
+    sent["academic_years"] = len(ays)
+
+    # -- programs (full send) --
+    pf, pv = _program_filter(cfg, "program_name")
+    programs = frappe.db.sql(
+        f"""SELECT program_name AS name, program_abbreviation AS code
+            FROM `tabProgram` WHERE COALESCE(program_abbreviation,'') != ''{pf}""",
+        pv,
+        as_dict=True,
+    )
+    if programs:
+        _post_kind(cfg, "programs", programs, errors)
+    sent["programs"] = len(programs)
+
+    # -- terms AFTER programs (semester generation needs programs in place) --
+    terms = frappe.db.sql(
+        """SELECT name, academic_year, term_start_date AS start_date, term_end_date AS end_date
+           FROM `tabAcademic Term` ORDER BY term_start_date""",
+        as_dict=True,
+    )
+    for r in terms:
+        r["start_date"], r["end_date"] = str(r["start_date"] or ""), str(r["end_date"] or "")
+    if terms:
+        _post_kind(cfg, "academic_terms", terms, errors)
+    sent["academic_terms"] = len(terms)
+
+    # -- batches: DISTINCT intake cohorts from the group `batch` field
+    #    (e.g. BTECH-CSE-2023-2027) — SRKR names its Batch-type Student Groups
+    #    per section-term, so the group NAME is a section, not the cohort. --
+    wm = _get_watermark("structure_batches")
+    pf, pv = _program_filter(cfg, "sg.program")
+    batches = frappe.db.sql(
+        f"""SELECT sg.batch AS erp_name, sg.program AS program_name,
+                   MAX(sg.academic_year) AS academic_year, MAX(sg.modified) AS modified
+            FROM `tabStudent Group` sg
+            WHERE COALESCE(sg.batch,'') != '' AND sg.modified > %s{pf}
+            GROUP BY sg.batch, sg.program
+            ORDER BY MAX(sg.modified)""",
+        [wm] + pv,
+        as_dict=True,
+    )
+    if batches:
+        _post_kind(cfg, "batches", [
+            {"erp_name": b.erp_name, "program_name": b.program_name, "academic_year": b.academic_year}
+            for b in batches
+        ], errors)
+        if not cfg["dry_run"]:
+            _set_watermark("structure_batches", str(batches[-1].modified))
+    sent["batches"] = len(batches)
+
+    # -- sections (watermarked; non-batch groups — the endpoint keeps only
+    #    canonical ...SEM-NN-X letter sections and skips subgroups) --
+    wm = _get_watermark("structure_sections")
+    pf, pv = _program_filter(cfg, "sg.program")
+    sections = frappe.db.sql(
+        f"""SELECT sg.name AS erp_group_name, sg.program AS program_name,
+                   sg.batch AS batch_name, sg.modified
+            FROM `tabStudent Group` sg
+            WHERE sg.name REGEXP 'SEM-[0-9]+-[A-Z]$' AND sg.modified > %s{pf}
+            ORDER BY sg.modified""",
+        [wm] + pv,
+        as_dict=True,
+    )
+    if sections:
+        _post_kind(cfg, "sections", [
+            {"erp_group_name": s.erp_group_name, "program_name": s.program_name, "batch_name": s.batch_name}
+            for s in sections
+        ], errors)
+        if not cfg["dry_run"]:
+            _set_watermark("structure_sections", str(sections[-1].modified))
+    sent["sections"] = len(sections)
+
+    # -- course schedule -> subjects + instructors + teaching assignments
+    #    (watermarked on schedule modified; DISTINCT tuples per run) --
+    wm = _get_watermark("structure_schedule")
+    pf, pv = _program_filter(cfg, "sg.program")
+    tuples = frappe.db.sql(
+        f"""SELECT DISTINCT cs.instructor AS instructor_name, cs.course,
+                   cs.student_group, sg.program,
+                   COALESCE(e.user_id, e.company_email) AS instructor_email
+            FROM `tabCourse Schedule` cs
+            JOIN `tabStudent Group` sg ON sg.name = cs.student_group
+            LEFT JOIN `tabInstructor` i ON i.name = cs.instructor
+            LEFT JOIN `tabEmployee` e ON e.name = i.employee
+            WHERE cs.modified > %s{pf}""",
+        [wm] + pv,
+        as_dict=True,
+    )
+    max_wm = frappe.db.sql(
+        "SELECT MAX(modified) FROM `tabCourse Schedule` WHERE modified > %s", (wm,)
+    )[0][0]
+    if tuples:
+        _post_kind(cfg, "schedule", [
+            {"instructor_name": r.instructor_name, "instructor_email": r.instructor_email,
+             "course": r.course, "student_group": r.student_group, "program": r.program}
+            for r in tuples
+        ], errors)
+        if not cfg["dry_run"] and max_wm:
+            _set_watermark("structure_schedule", str(max_wm))
+    sent["schedule_tuples"] = len(tuples)
+
+    # -- finalize: regenerate cohort->lab rows + collect the unmapped report --
+    resp = _post(cfg, "/api/admin/college/sync-structure",
+                 {"college_slug": cfg["slug"], "kind": "finalize", "rows": []}) if not cfg["dry_run"] else {"dry_run": True}
+    if isinstance(resp, dict) and resp.get("unmapped_subjects"):
+        frappe.logger("deployu").info(json.dumps({"unmapped_lab_subjects": resp["unmapped_subjects"]}))
+
+    _log_run("structure", sent, resp, errors)
+    return {"sent": sent, "errors": len(errors)}
 
 
 # --------------------------------------------------------------------------
@@ -274,7 +421,8 @@ def nightly_sync():
         frappe.logger("deployu").error("deployu sync misconfigured — missing url/slug/key")
         return
     summary = {}
-    for name, fn in (("students", sync_students),
+    for name, fn in (("structure", sync_structure),
+                     ("students", sync_students),
                      ("results", sync_results),
                      ("attendance", sync_attendance)):
         try:
