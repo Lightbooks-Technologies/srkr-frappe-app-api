@@ -10,8 +10,11 @@
 # Safety audit (2026-07-12, prod): Student Attendance has NO doc_events in
 # either app, NO controller hooks beyond validate(), NO server scripts /
 # notifications / webhooks / workflows / assignment rules, and
-# track_changes=0. The ONLY behavior bypassed by bulk_insert is validate()
-# itself, which is replicated set-wise below with identical error messages.
+# track_changes=0. bulk_insert bypasses validate() — replicated set-wise
+# below with identical error messages — and fetch_from resolution, so the
+# four fetch_from fields (student_name, student_mobile_number,
+# link_nvfk←student_group.program, custom_student_attendance_student_id)
+# are resolved explicitly at insert time (review finding, 2026-07-13).
 #
 # Behavior change (intentional, replaces a dead code path in the legacy
 # helper): re-submitting a class UPDATES the status of existing records
@@ -143,6 +146,18 @@ def bulk_mark_class(course_schedule: str, student_group: str | None, date, entri
 
 	# --- single bulk INSERT for the new rows, docstatus=1 (submitted) ---
 	if to_insert:
+		# fetch_from fields, resolved set-wise (bulk_insert skips doc.save()):
+		#   link_nvfk <- student_group.program (one lookup)
+		#   student_mobile_number / custom_student_attendance_student_id <- Student
+		program = frappe.db.get_value("Student Group", effective_group, "program")
+		meta_rows = frappe.db.sql(
+			"""SELECT name, student_mobile_number, custom_student_id
+			   FROM `tabStudent` WHERE name IN %s""",
+			(tuple(e["student"] for e in to_insert),),
+			as_dict=True,
+		)
+		student_meta = {m.name: m for m in meta_rows}
+
 		names = _reserve_series(len(to_insert))
 		ts = now()
 		user = frappe.session.user
@@ -162,6 +177,9 @@ def bulk_mark_class(course_schedule: str, student_group: str | None, date, entri
 				"modified_by",
 				"creation",
 				"modified",
+				"student_mobile_number",
+				"link_nvfk",
+				"custom_student_attendance_student_id",
 			],
 			values=[
 				(
@@ -178,6 +196,9 @@ def bulk_mark_class(course_schedule: str, student_group: str | None, date, entri
 					user,
 					ts,
 					ts,
+					(student_meta.get(e["student"]) or {}).get("student_mobile_number"),
+					program,
+					(student_meta.get(e["student"]) or {}).get("custom_student_id"),
 				)
 				for i, e in enumerate(to_insert)
 			],
@@ -223,7 +244,9 @@ def selftest(student_group: str, course_schedule: str):
 			)
 		legacy = frappe.db.sql(
 			"""SELECT student, student_name, course_schedule, student_group,
-			          date, status, docstatus
+			          date, status, docstatus,
+			          student_mobile_number, link_nvfk,
+			          custom_student_attendance_student_id
 			   FROM `tabStudent Attendance` WHERE course_schedule = %s
 			   ORDER BY student""",
 			(course_schedule,),
@@ -235,7 +258,9 @@ def selftest(student_group: str, course_schedule: str):
 		bulk_mark_class(course_schedule, student_group, date, entries)
 		bulk = frappe.db.sql(
 			"""SELECT student, student_name, course_schedule, student_group,
-			          date, status, docstatus
+			          date, status, docstatus,
+			          student_mobile_number, link_nvfk,
+			          custom_student_attendance_student_id
 			   FROM `tabStudent Attendance` WHERE course_schedule = %s
 			   ORDER BY student""",
 			(course_schedule,),
