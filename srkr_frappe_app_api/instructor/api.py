@@ -1,7 +1,7 @@
 # srkr_frappe_app_api/srkr_frappe_app_api/instructor/api.py
 
 import frappe
-from frappe.utils import getdate, get_time, today, now_datetime # <-- Added 'today'
+from frappe.utils import getdate, get_time, today, now_datetime, cint # <-- Added 'today'
 import re 
 from datetime import timedelta, datetime as dt
 import json
@@ -418,17 +418,17 @@ def make_attendance_records(
 	student_attendance.save()
 	student_attendance.submit()
 
-def send_summary_sms_helper(mobile_no, message_text, template_id):
+def send_summary_sms_helper(mobile_no, message_text, template_id, session=None):
     """Generic helper function to call the SMS API."""
     API_URL = "https://smslogin.co/v3/api.php"
     API_KEY = "441580e5effd27db3eaa"
     USERNAME = "srkrec"
     SENDER_ID = "SRKREC"
-    
+
     params = {"username": USERNAME, "apikey": API_KEY, "senderid": SENDER_ID, "mobile": mobile_no, "message": message_text, "templateid": template_id}
-    
+
     try:
-        response = requests.get(API_URL, params=params, timeout=10)
+        response = (session or requests).get(API_URL, params=params, timeout=10)
         response.raise_for_status()
         response_text = response.text
         campid = response_text.split("'")[3] if 'campid' in response_text else response_text
@@ -439,123 +439,202 @@ def send_summary_sms_helper(mobile_no, message_text, template_id):
         frappe.log_error(frappe.get_traceback(), title=f"SMS API Call Failed for {mobile_no}")
         return None
 
-@frappe.whitelist()
-def send_daily_attendance_summary():
-    """Scheduled function to send a consolidated SMS to parents of absent students."""
-    
-    # --- UI SETTINGS FETCH ---
+# Students are processed in batches of this size, each batch as its own background
+# job on the "long" queue. Cron-scheduled jobs run on the default queue whose RQ
+# timeout is 300s — far less than ~2,000 sequential SMS gateway calls need — so a
+# single monolithic run was being killed mid-loop with no error logged.
+DAILY_SUMMARY_BATCH_SIZE = 100
+DAILY_SUMMARY_SMS_TEMPLATE = "1707163646397399883"
+
+# This list contains custom_student_id's that should be temporarily skipped.
+DAILY_SUMMARY_EXCLUDED_STUDENT_IDS = ["25B91A05K6","25B91A5453","25B91A12G3","25B91A6216","25B91A5479","25B91A07B8", "25B91A0554", "25B91A05K6", "25B91A5453", "25B91A6216", "25B91A0793", "25B91A0796", "25B91A0723", "25B91A07C2", "25B91A0718", "25B91A07C4", "25B91A0455", "25B91A0792", "25B91A0344", "25B91A54E8", "25B91A54B7", "25B91A54G8", "25B91A04G0", "25B91A5470"]
+
+
+def _get_daily_summary_patterns():
+    """Resolve the student-group filter patterns from 'SMS Notification Settings'.
+
+    Returns None when the daily summary is disabled, otherwise the pattern list
+    (falling back to hardcoded constants if the DocType is missing/broken).
+    """
     try:
         sms_settings = frappe.get_single("SMS Notification Settings")
         if not sms_settings.enable_daily_summary:
             print("Daily Attendance Summary SMS is disabled in 'SMS Notification Settings'. Skipping.")
-            return
-        
+            return None
+
         # EMERGENCY FALLBACK: Check if we should ignore UI and use code
         if sms_settings.ignore_ui_and_use_code_defaults:
             print("EMERGENCY FALLBACK: 'Ignore UI' is checked. Using hardcoded patterns from api.py")
-            current_patterns = DAILY_SUMMARY_REQUIRED_PATTERNS
-        else:
-            # Load from UI (Checkboxes)
-            category = sms_settings.daily_summary_category or "BTECH"
-            semesters = []
-            for i in range(1, 9):
-                fieldname = f"sem_0{i}"
-                if sms_settings.get(fieldname):
-                    semesters.append(f"SEM-0{i}")
-            
-            current_patterns = [category] + semesters
-            print(f"Using UI-configured patterns: {current_patterns}")
-    except (frappe.DoesNotExistError, Exception):
+            return DAILY_SUMMARY_REQUIRED_PATTERNS
+
+        # Load from UI (Checkboxes)
+        category = sms_settings.daily_summary_category or "BTECH"
+        semesters = [f"SEM-0{i}" for i in range(1, 9) if sms_settings.get(f"sem_0{i}")]
+        current_patterns = [category] + semesters
+        print(f"Using UI-configured patterns: {current_patterns}")
+        return current_patterns
+    except Exception:
         # Fallback to hardcoded constants if the DocType hasn't been migrated or doesn't exist
         print("Note: 'SMS Notification Settings' not found or error occurred. Falling back to hardcoded patterns.")
-        current_patterns = DAILY_SUMMARY_REQUIRED_PATTERNS
-    # --------------------------
+        return DAILY_SUMMARY_REQUIRED_PATTERNS
+
+
+def _get_notified_students(processing_date):
+    """Students who already have an SMS Log entry today (the idempotency key)."""
+    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
+    return {log.split(": ")[1] for log in logs_today if log and log.startswith("Student: ")}
+
+
+@frappe.whitelist()
+def send_daily_attendance_summary(alert_if_pending=False):
+    """Scheduled dispatcher for the absent-student parent SMS.
+
+    Finishes in seconds: it only finds absent students without an SMS Log entry
+    and fans them out to process_attendance_summary_batch jobs on the long
+    queue. Safe to run repeatedly — later runs re-enqueue only the students the
+    earlier runs didn't reach, so the extra cron sweeps act as retries.
+    """
+    current_patterns = _get_daily_summary_patterns()
+    if current_patterns is None:
+        return
 
     processing_date = today()
-    print(f"--- Running Daily Student Attendance Summary for {processing_date} ---")
+    print(f"--- Dispatching Daily Student Attendance Summary for {processing_date} ---")
 
-    # --- CHANGE 1: DEFINE THE EXCLUSION LIST ---
-    # This list contains custom_student_id's that should be temporarily skipped.
-    excluded_student_ids = ["25B91A05K6","25B91A5453","25B91A12G3","25B91A6216","25B91A5479","25B91A07B8", "25B91A0554", "25B91A05K6", "25B91A5453", "25B91A6216", "25B91A0793", "25B91A0796", "25B91A0723", "25B91A07C2", "25B91A0718", "25B91A07C4", "25B91A0455", "25B91A0792", "25B91A0344", "25B91A54E8", "25B91A54B7", "25B91A54G8", "25B91A04G0", "25B91A5470"]
-    print(f"Exclusion list is active for these IDs: {excluded_student_ids}")
-    # ----------------------------------------------
+    already_processed = _get_notified_students(processing_date)
 
-    # Use the existing "SMS Log" and filter by the "sent_to" convention
-    logs_today = frappe.get_all("SMS Log", filters={"sent_on": processing_date}, pluck="sent_to")
-    already_processed = [log.split(": ")[1] for log in logs_today if log and log.startswith("Student: ")]
-    print(f"Students already processed today: {already_processed}")
-
-    # --- LOGIC RESTORED: Get a unique list of students who were marked absent at least once today. ---
     absent_students = frappe.get_all(
         "Student Attendance",
         filters={"date": processing_date, "status": "Absent"},
         fields=["DISTINCT student"],
         pluck="student"
     )
-    print(f"Found {len(absent_students)} absent students today: {absent_students}")
+    pending = [s for s in absent_students if s not in already_processed]
+    print(f"Absent today: {len(absent_students)}, already notified: {len(already_processed)}, pending: {len(pending)}")
 
-    for student_id in absent_students:
+    if not pending:
+        print("--- All absent students already notified. Nothing to dispatch. ---")
+        return
+
+    if cint(alert_if_pending):
+        frappe.log_error(
+            f"{len(pending)} of {len(absent_students)} absent students had no SMS Log entry "
+            f"before the final sweep on {processing_date}. A final retry batch has been enqueued; "
+            f"if this alert repeats daily, check worker capacity (bench doctor) and the long queue.",
+            "Daily Attendance Summary Pending",
+        )
+
+    for i in range(0, len(pending), DAILY_SUMMARY_BATCH_SIZE):
+        batch = pending[i:i + DAILY_SUMMARY_BATCH_SIZE]
+        frappe.enqueue(
+            "srkr_frappe_app_api.instructor.api.process_attendance_summary_batch",
+            queue="long",
+            timeout=1800,
+            job_id=f"daily-absent-sms|{processing_date}|{batch[0]}|{len(batch)}",
+            deduplicate=True,
+            student_ids=batch,
+            processing_date=processing_date,
+            current_patterns=current_patterns,
+        )
+    print(f"--- Enqueued {-(-len(pending) // DAILY_SUMMARY_BATCH_SIZE)} batch job(s) of up to {DAILY_SUMMARY_BATCH_SIZE} students. ---")
+
+
+@frappe.whitelist()
+def send_daily_attendance_summary_final_sweep():
+    """Last scheduled retry of the day; raises an Error Log if students are still un-notified."""
+    send_daily_attendance_summary(alert_if_pending=True)
+
+
+def process_attendance_summary_batch(student_ids, processing_date, current_patterns):
+    """Send the absent-summary SMS for one batch of students (runs on the long queue).
+
+    Idempotent: re-checks SMS Log before sending, so overlapping or retried
+    batches never double-send. Commits after each student, so a killed worker
+    loses at most the in-flight student and the next dispatcher sweep picks up
+    the remainder.
+    """
+    print(f"--- Processing batch of {len(student_ids)} students for {processing_date} ---")
+
+    # Re-check inside the worker: another batch/sweep may have covered these students
+    # between enqueue and execution.
+    already_processed = _get_notified_students(processing_date)
+
+    student_details = {
+        s.name: s
+        for s in frappe.get_all(
+            "Student",
+            filters={"name": ["in", student_ids]},
+            fields=["name", "custom_father_mobile_number", "custom_student_id"],
+        )
+    }
+    student_groups = {}
+    for row in frappe.get_all(
+        "Student Attendance",
+        filters={"student": ["in", student_ids], "date": processing_date},
+        fields=["student", "student_group"],
+    ):
+        student_groups.setdefault(row.student, row.student_group)
+
+    attendance_counts = {}
+    for row in frappe.get_all(
+        "Student Attendance",
+        filters={"student": ["in", student_ids], "date": processing_date},
+        fields=["student", "status", "count(name) as cnt"],
+        group_by="student, status",
+    ):
+        totals = attendance_counts.setdefault(row.student, {"present": 0, "total": 0})
+        totals["total"] += row.cnt
+        if row.status == "Present":
+            totals["present"] += row.cnt
+
+    session = requests.Session()
+    for student_id in student_ids:
         if student_id in already_processed:
             print(f"Skipping student {student_id}, summary already sent.")
             continue
         try:
-            print(f"\n--- Processing Student: {student_id} ---")
+            student = student_details.get(student_id)
+            if not student:
+                print(f"Warning: Student {student_id} not found. Skipping.")
+                continue
+            mobile_no, reg_no = student.custom_father_mobile_number, student.custom_student_id
 
-            # Fetch student document early to get all necessary details
-            student_doc = frappe.get_doc("Student", student_id)
-            mobile_no, reg_no = student_doc.get("custom_father_mobile_number"), student_doc.get("custom_student_id")
-            
-            # --- CHANGE 2: ADD THE EXCLUSION FILTER LOGIC ---
-            # This check runs first. If a student is on the list, the loop continues to the next student.
-            if reg_no in excluded_student_ids:
+            if reg_no in DAILY_SUMMARY_EXCLUDED_STUDENT_IDS:
                 print(f"Skipping student {student_id} ({reg_no}) as they are on the temporary exclusion list.")
                 continue
-            # ----------------------------------------------------
 
-            # Get student group (original logic preserved)
-            student_group = frappe.get_value("Student Attendance", {"student": student_id, "date": processing_date}, "student_group")
-
-            # --- START: Configurable Filter ---
-            # Check if student_group matches the configured criteria in DAILY_SUMMARY_REQUIRED_PATTERNS
-            # All patterns in DAILY_SUMMARY_REQUIRED_PATTERNS must be present in student_group
+            student_group = student_groups.get(student_id)
             if not student_group:
                 print(f"Skipping student {student_id} as student_group is missing.")
                 continue
 
             if current_patterns:
-                # Restoration of working logic: "BTECH" is mandatory (if in the list), 
-                # and at least one of the other patterns (e.g., semesters) must match.
-                has_category = current_patterns[0] in student_group if current_patterns else True
-                other_patterns = current_patterns[1:] if len(current_patterns) > 1 else []
+                # "BTECH" (the category) is mandatory, and at least one of the
+                # other patterns (e.g., semesters) must match.
+                has_category = current_patterns[0] in student_group
+                other_patterns = current_patterns[1:]
                 has_other = any(p in student_group for p in other_patterns) if other_patterns else True
-                
                 if not (has_category and has_other):
                     print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {current_patterns}.")
                     continue
-            # --- END: Configurable Filter ---
-            
-            # Mobile number check (original logic preserved)
+
             if not mobile_no:
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
                 continue
             if not mobile_no.startswith("91"):
                 mobile_no = "91" + mobile_no
-            
-            attended_count = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date, "status": "Present"})
-            total_classes = frappe.db.count("Student Attendance", {"student": student_id, "date": processing_date})
-            
+
+            totals = attendance_counts.get(student_id, {"present": 0, "total": 0})
+            attended_count, total_classes = totals["present"], totals["total"]
             print(f"Summary for {student_id}: Attended={attended_count}, Total (recorded)={total_classes}")
-            
+
             ward_variable = f"({reg_no or student_id})"
             date_variable = getdate(processing_date).strftime('%d-%m-%Y')
             attd_con_variable = f"({attended_count}/{total_classes})"
             message_text = f"Dear Parent, Your ward {ward_variable} is absent on {date_variable} . Please take care. (Attd/Con):{attd_con_variable} -Principal, SRKREC"
-            print(f"Constructed Message: {message_text}")
-            
-            # UNCOMMENT to send SMS
-            message_id = send_summary_sms_helper(mobile_no, message_text, "1707163646397399883")
-            # message_id = "STUDENT_SMS_DISABLED"
-            
+
+            message_id = send_summary_sms_helper(mobile_no, message_text, DAILY_SUMMARY_SMS_TEMPLATE, session=session)
+
             if message_id:
                 log_doc = frappe.new_doc("SMS Log")
                 log_doc.sent_on = processing_date
@@ -567,7 +646,7 @@ def send_daily_attendance_summary():
                 print(f"Successfully logged summary for student {student_id}.")
         except Exception as e:
             print(f"!!! ERROR for student {student_id}: {e}"); frappe.log_error(frappe.get_traceback(), f"Summary failed for student {student_id}"); frappe.db.rollback()
-    print("--- Daily Student Attendance Summary complete. ---")
+    print("--- Batch complete. ---")
 
 @frappe.whitelist()
 def send_instructor_attendance_reminders():
