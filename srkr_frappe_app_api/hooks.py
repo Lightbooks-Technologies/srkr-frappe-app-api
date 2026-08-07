@@ -173,9 +173,18 @@ scheduler_events = {
         "0 3 * * *": [
             "srkr_frappe_app_api.deployu_connector.tasks.nightly_sync"
         ],
-        # This is your existing job that runs at 6:00 PM
+        # Absent-student parent SMS. The 18:00 run dispatches batch jobs to the
+        # long queue; 19:00 re-dispatches whatever the first run didn't reach
+        # (idempotent via SMS Log), and the 20:30 final sweep additionally
+        # raises an Error Log alert if students are still un-notified.
         "0 18 * * *": [
             "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
+        ],
+        "0 19 * * *": [
+            "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary"
+        ],
+        "30 20 * * *": [
+            "srkr_frappe_app_api.instructor.api.send_daily_attendance_summary_final_sweep"
         ],
         "10 17 * * *": [  # Runs at 5:10 PM for instructor reminders
             "srkr_frappe_app_api.instructor.api.send_instructor_attendance_reminders"
