@@ -518,10 +518,10 @@ def send_daily_attendance_summary(alert_if_pending=False):
 
     if cint(alert_if_pending):
         frappe.log_error(
-            f"{len(pending)} of {len(absent_students)} absent students had no SMS Log entry "
+            title="Daily Attendance Summary Pending",
+            message=f"{len(pending)} of {len(absent_students)} absent students had no SMS Log entry "
             f"before the final sweep on {processing_date}. A final retry batch has been enqueued; "
             f"if this alert repeats daily, check worker capacity (bench doctor) and the long queue.",
-            "Daily Attendance Summary Pending",
         )
 
     for i in range(0, len(pending), DAILY_SUMMARY_BATCH_SIZE):
