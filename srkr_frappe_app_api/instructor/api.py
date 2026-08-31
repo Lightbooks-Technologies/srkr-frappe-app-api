@@ -450,6 +450,19 @@ DAILY_SUMMARY_SMS_TEMPLATE = "1707163646397399883"
 DAILY_SUMMARY_EXCLUDED_STUDENT_IDS = ["25B91A05K6","25B91A5453","25B91A12G3","25B91A6216","25B91A5479","25B91A07B8", "25B91A0554", "25B91A05K6", "25B91A5453", "25B91A6216", "25B91A0793", "25B91A0796", "25B91A0723", "25B91A07C2", "25B91A0718", "25B91A07C4", "25B91A0455", "25B91A0792", "25B91A0344", "25B91A54E8", "25B91A54B7", "25B91A54G8", "25B91A04G0", "25B91A5470"]
 
 
+def _is_holiday(date):
+    """True if `date` falls in the default Company's default Holiday List."""
+    company = frappe.defaults.get_global_default("company") or frappe.db.get_value("Company", {}, "name")
+    if not company:
+        return False
+    holiday_list = frappe.get_cached_value("Company", company, "default_holiday_list")
+    if not holiday_list:
+        return False
+    return bool(
+        frappe.db.exists("Holiday", {"parent": holiday_list, "holiday_date": getdate(date)})
+    )
+
+
 def _get_daily_summary_patterns():
     """Resolve the student-group filter patterns from 'SMS Notification Settings'.
 
@@ -494,11 +507,16 @@ def send_daily_attendance_summary(alert_if_pending=False):
     queue. Safe to run repeatedly — later runs re-enqueue only the students the
     earlier runs didn't reach, so the extra cron sweeps act as retries.
     """
+    processing_date = today()
+
+    if _is_holiday(processing_date):
+        print(f"{processing_date} is a holiday. Skipping Daily Attendance Summary.")
+        return
+
     current_patterns = _get_daily_summary_patterns()
     if current_patterns is None:
         return
 
-    processing_date = today()
     print(f"--- Dispatching Daily Student Attendance Summary for {processing_date} ---")
 
     already_processed = _get_notified_students(processing_date)
@@ -654,6 +672,9 @@ def send_instructor_attendance_reminders():
     Scheduled function to find instructors with missed attendance for ACTIVE student groups and send a reminder.
     (Optimized Logic with Filtering)
     """
+    if _is_holiday(today()):
+        print(f"{today()} is a holiday. Skipping Instructor Attendance Reminder.")
+        return
 
     # --- UI SETTINGS FETCH ---
     try:
