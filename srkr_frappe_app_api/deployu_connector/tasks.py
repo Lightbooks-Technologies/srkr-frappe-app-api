@@ -255,7 +255,7 @@ def sync_students(cfg=None):
             WHERE sg2.group_based_on = 'Batch'
         ) sg ON sg.student = s.name AND sg.rn = 1
         WHERE s.enabled = 1 AND s.custom_student_id IS NOT NULL
-          AND pe.current_semester LIKE 'SEM-%'{pf}
+          AND pe.current_semester LIKE 'SEM-%%'{pf}
         """,
         pv,
         as_dict=True,
