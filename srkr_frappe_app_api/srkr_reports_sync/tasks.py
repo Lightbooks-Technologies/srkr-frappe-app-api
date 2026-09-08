@@ -3,7 +3,7 @@
 # these jobs only aggregate FROM tab* INTO srkr_reports.rpt_*.
 #
 # Registered in hooks.py scheduler_events:
-#   - incremental_refresh: cron every 20 min
+#   - incremental_refresh: cron hourly
 #   - nightly_full_rebuild: cron 2 AM (also reconciles hard deletes via
 #     tabDeleted Document — incremental-on-modified cannot see deletes)
 #
@@ -17,6 +17,19 @@ import frappe
 
 REPORTS_SCHEMA = "srkr_reports"
 LAST_RUN_KEY = "srkr_reports_sync_last_run"
+REFRESH_LOCK = "srkr_reports_sync_refresh"
+
+
+def _acquire_refresh_lock() -> bool:
+    # Under DB pressure a rebuild can outlive its cron interval, and
+    # overlapping REPLACE rebuilds multiply the load (three were stacked during
+    # the 2026-09-08 slowdown). GET_LOCK is connection-scoped, so a dead worker
+    # releases it automatically.
+    return bool(frappe.db.sql("SELECT GET_LOCK(%s, 0)", REFRESH_LOCK)[0][0])
+
+
+def _release_refresh_lock():
+    frappe.db.sql("SELECT RELEASE_LOCK(%s)", REFRESH_LOCK)
 
 # Terms are auto-discovered: any academic term that has submitted attendance.
 ACTIVE_TERMS_SQL = """
@@ -143,7 +156,7 @@ def _current_terms() -> list[str]:
 
 
 def incremental_refresh():
-    """Every ~20 min: re-aggregate slices touched since the last run.
+    """Hourly: re-aggregate slices touched since the last run.
 
     Strategy: find (student_group, course) pairs and terms with attendance
     modified since last_run, then rebuild only the affected terms' slices.
@@ -151,28 +164,36 @@ def incremental_refresh():
     rebuild the current term(s) — cheap (one term ≈ seconds) and immune to
     partial-slice bugs. Deletes are handled nightly.
     """
-    last_run = frappe.db.get_global(LAST_RUN_KEY)
-    changed = frappe.db.sql(
-        """
-        SELECT COUNT(*) FROM `tabStudent Attendance`
-        WHERE modified > COALESCE(%(last_run)s, '1900-01-01')
-        """,
-        {"last_run": last_run},
-        as_list=True,
-    )[0][0]
-    if not changed:
+    if not _acquire_refresh_lock():
+        frappe.logger("srkr_reports_sync").info(
+            "incremental refresh skipped: previous run still active"
+        )
         return
+    try:
+        last_run = frappe.db.get_global(LAST_RUN_KEY)
+        changed = frappe.db.sql(
+            """
+            SELECT COUNT(*) FROM `tabStudent Attendance`
+            WHERE modified > COALESCE(%(last_run)s, '1900-01-01')
+            """,
+            {"last_run": last_run},
+            as_list=True,
+        )[0][0]
+        if not changed:
+            return
 
-    now = frappe.utils.now()
-    for term in _current_terms():
-        _rebuild_term_student_course(term)
-        _rebuild_term_group_course_day(term)
-        _rebuild_term_dept_day(term)
-    frappe.db.set_global(LAST_RUN_KEY, now)
-    frappe.db.commit()
-    frappe.logger("srkr_reports_sync").info(
-        f"incremental refresh: {changed} changed rows, terms={_current_terms()}"
-    )
+        now = frappe.utils.now()
+        for term in _current_terms():
+            _rebuild_term_student_course(term)
+            _rebuild_term_group_course_day(term)
+            _rebuild_term_dept_day(term)
+        frappe.db.set_global(LAST_RUN_KEY, now)
+        frappe.db.commit()
+        frappe.logger("srkr_reports_sync").info(
+            f"incremental refresh: {changed} changed rows, terms={_current_terms()}"
+        )
+    finally:
+        _release_refresh_lock()
 
 
 def nightly_full_rebuild():
@@ -184,6 +205,18 @@ def nightly_full_rebuild():
     aggregate rows whose underlying (group, course, date) no longer has any
     submitted attendance — covering slices emptied by deletion.
     """
+    if not _acquire_refresh_lock():
+        frappe.logger("srkr_reports_sync").info(
+            "nightly rebuild skipped: another refresh still active"
+        )
+        return
+    try:
+        _nightly_full_rebuild_locked()
+    finally:
+        _release_refresh_lock()
+
+
+def _nightly_full_rebuild_locked():
     terms = [r[0] for r in frappe.db.sql(ACTIVE_TERMS_SQL, as_list=True)]
     for term in terms:
         _rebuild_term_student_course(term)
