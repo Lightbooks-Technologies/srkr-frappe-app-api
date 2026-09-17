@@ -16,17 +16,35 @@ Scheduling (hooks.py):
     "cron": { "0 3 * * *": ["srkr_frappe_app_api.deployu_connector.tasks.nightly_sync"] }
     (03:00 IST — after the 02:00 srkr_reports full rebuild, so summaries are fresh.)
 
+Cron scheduler events run on the default RQ queue (300s timeout), which the
+sync cannot fit in: nightly_sync only enqueues run_nightly_sync on the long
+queue with its own timeout. Run by hand with:
+    bench --site <site> execute srkr_frappe_app_api.deployu_connector.tasks.run_nightly_sync
+
 Watermarks are stored via frappe defaults (frappe.db get/set_global), so each run
 sends only rows changed since the last successful run. Re-sends are safe — every
 DeployU endpoint is an idempotent upsert.
 """
 import json
+import time
 
 import frappe
 import requests
 
 BATCH = 500
-TIMEOUT = 60
+# The roster endpoint does several Supabase round trips per student (auth user,
+# users row, profile upsert), ~0.5s each — 500 students cannot finish inside
+# one HTTP request, so the roster goes in small chunks.
+STUDENT_BATCH = 50
+TIMEOUT = 120
+# Attempts per POST; waits between them. Every endpoint is an idempotent upsert,
+# so re-sending a chunk whose response was lost is safe.
+RETRY_WAITS = (5, 20)
+JOB_TIMEOUT = 3 * 60 * 60
+SYNC_LOCK = "deployu_nightly_sync"
+# Roster is sent as a delta; this weekday (Mon=0 .. Sun=6) re-sends everyone to
+# catch bulk SQL updates that do not touch `modified`.
+FULL_ROSTER_WEEKDAY = 6
 
 
 # --------------------------------------------------------------------------
@@ -49,19 +67,30 @@ def _post(cfg, path, payload):
     if cfg["dry_run"]:
         frappe.logger("deployu").info(f"[DRY RUN] POST {path}: {len(list(payload.values())[1])} rows")
         return {"dry_run": True}
-    resp = requests.post(
-        f"{cfg['url']}{path}",
-        json=payload,
-        headers={"x-api-key": cfg["key"], "Content-Type": "application/json"},
-        timeout=TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    for wait in RETRY_WAITS + (None,):
+        try:
+            resp = requests.post(
+                f"{cfg['url']}{path}",
+                json=payload,
+                headers={"x-api-key": cfg["key"], "Content-Type": "application/json"},
+                timeout=TIMEOUT,
+            )
+            # 4xx is our payload or key — retrying cannot fix it.
+            if resp.status_code < 500:
+                resp.raise_for_status()
+                return resp.json()
+            error = requests.HTTPError(f"{resp.status_code} from {path}", response=resp)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            error = e
+        if wait is None:
+            raise error
+        frappe.logger("deployu").warning(f"POST {path} failed ({error}); retrying in {wait}s")
+        time.sleep(wait)
 
 
-def _chunks(rows):
-    for i in range(0, len(rows), BATCH):
-        yield rows[i : i + BATCH]
+def _chunks(rows, size=BATCH):
+    for i in range(0, len(rows), size):
+        yield rows[i : i + size]
 
 
 def _get_watermark(name):
@@ -236,19 +265,24 @@ def sync_structure(cfg=None):
 # 1. roster (students + section + current semester -> drives promotion/gating)
 # --------------------------------------------------------------------------
 
-def sync_students(cfg=None):
+def sync_students(cfg=None, full=False):
+    """Push the roster. Delta by default: students whose Student, Program
+    Enrollment or current Student Group changed since the last clean run.
+    full=True re-sends everyone (first run, weekly safety net, manual repair)."""
     cfg = cfg or _cfg()
+    wm = "2000-01-01 00:00:00" if full else _get_watermark("students")
     pf, pv = _program_filter(cfg, "pe.program")
     rows = frappe.db.sql(
         f"""
         SELECT s.name AS erp_id, s.student_name, s.custom_student_id AS roll_number,
                LOWER(TRIM(s.student_email_id)) AS email,
                pe.program, pe.current_semester,
-               sg.batch AS erp_batch_name, sg.name AS erp_group_name
+               sg.batch AS erp_batch_name, sg.name AS erp_group_name,
+               GREATEST(s.modified, pe.modified, COALESCE(sg.modified, s.modified)) AS changed_at
         FROM `tabStudent` s
         JOIN `tabProgram Enrollment` pe ON pe.student = s.name AND pe.docstatus < 2
         LEFT JOIN (
-            SELECT sgs.student, sg2.batch, sg2.name,
+            SELECT sgs.student, sg2.batch, sg2.name, sg2.modified,
                    ROW_NUMBER() OVER (PARTITION BY sgs.student ORDER BY sg2.academic_year DESC) rn
             FROM `tabStudent Group` sg2
             JOIN `tabStudent Group Student` sgs ON sgs.parent = sg2.name
@@ -256,10 +290,15 @@ def sync_students(cfg=None):
         ) sg ON sg.student = s.name AND sg.rn = 1
         WHERE s.enabled = 1 AND s.custom_student_id IS NOT NULL
           AND pe.current_semester LIKE 'SEM-%%'{pf}
+          AND GREATEST(s.modified, pe.modified, COALESCE(sg.modified, s.modified)) > %s
+        ORDER BY changed_at
         """,
-        pv,
+        pv + [wm],
         as_dict=True,
     )
+    if not rows:
+        _log_run("students", 0, {"note": "no changes since watermark"}, [])
+        return {"sent": 0}
 
     # ERP batch name -> LMS batch id is resolved on the DeployU side via
     # erp_batch_mappings; we send names. Section letter parsed from group name.
@@ -282,13 +321,29 @@ def sync_students(cfg=None):
             "section": section,
         })
 
-    errors, resp = [], {}
-    for chunk in _chunks(students):
-        resp = _post(cfg, "/api/admin/college/sync-students",
-                     {"college_slug": cfg["slug"], "students": chunk})
-        errors += resp.get("errors", []) if isinstance(resp, dict) else []
-    _log_run("students", len(students), resp, errors)
-    return {"sent": len(students), "errors": len(errors)}
+    # One bad chunk must not cost the rest of the roster: log it, keep going,
+    # and hold the watermark so the next run sends the same delta again.
+    errors, chunk_failures, resp, sent = [], [], {}, 0
+    for chunk in _chunks(students, STUDENT_BATCH):
+        try:
+            resp = _post(cfg, "/api/admin/college/sync-students",
+                         {"college_slug": cfg["slug"], "students": chunk})
+        except Exception as e:
+            chunk_failures.append(f"chunk starting {chunk[0]['roll_number']}: {e}")
+            continue
+        sent += len(chunk)
+        errors += (resp.get("errors") or []) if isinstance(resp, dict) else []
+
+    failed_chunks = len(chunk_failures)
+    if failed_chunks:
+        frappe.log_error(
+            title=f"DeployU sync: {failed_chunks} roster chunk(s) failed",
+            message="\n".join(chunk_failures),
+        )
+    elif not cfg["dry_run"]:
+        _set_watermark("students", str(rows[-1].changed_at))
+    _log_run("students", sent, resp, errors)
+    return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors)}
 
 
 # --------------------------------------------------------------------------
@@ -412,7 +467,8 @@ def sync_attendance(cfg=None):
 # --------------------------------------------------------------------------
 
 def nightly_sync():
-    """Cron entry point — roster first (identity), then marks, then attendance."""
+    """Cron entry point. Cron events run on the default queue (300s), so this
+    only hands the real work to the long queue with a timeout it can fit in."""
     cfg = _cfg()
     if not cfg["enabled"]:
         frappe.logger("deployu").info("deployu sync disabled (deployu_sync_enabled=0)")
@@ -420,15 +476,43 @@ def nightly_sync():
     if not (cfg["url"] and cfg["slug"] and cfg["key"]):
         frappe.logger("deployu").error("deployu sync misconfigured — missing url/slug/key")
         return
-    summary = {}
-    for name, fn in (("structure", sync_structure),
-                     ("students", sync_students),
-                     ("results", sync_results),
-                     ("attendance", sync_attendance)):
-        try:
-            summary[name] = fn(cfg)
-        except Exception:
-            frappe.log_error(frappe.get_traceback(), f"DeployU sync failed: {name}")
-            summary[name] = {"error": True}
-    frappe.logger("deployu").info(json.dumps({"nightly_sync": summary}))
-    return summary
+    frappe.enqueue(
+        "srkr_frappe_app_api.deployu_connector.tasks.run_nightly_sync",
+        queue="long",
+        timeout=JOB_TIMEOUT,
+        job_id=f"deployu-nightly-sync|{frappe.utils.today()}",
+        deduplicate=True,
+    )
+
+
+def run_nightly_sync(full_roster=None):
+    """Structure first, then roster (identity), then marks, then attendance.
+    Each stage is isolated: a failure is logged and the next stage still runs."""
+    cfg = _cfg()
+    if not cfg["enabled"]:
+        return
+    # Connection-scoped lock: a manual run and the cron run must not overlap,
+    # and a dead worker releases it with its connection.
+    if not frappe.db.sql("SELECT GET_LOCK(%s, 0)", SYNC_LOCK)[0][0]:
+        frappe.logger("deployu").info("deployu sync skipped — a previous run is still active")
+        return
+    try:
+        if full_roster is None:
+            full_roster = frappe.utils.getdate().weekday() == FULL_ROSTER_WEEKDAY
+        summary = {}
+        for name, fn in (("structure", sync_structure),
+                         ("students", lambda c: sync_students(c, full=full_roster)),
+                         ("results", sync_results),
+                         ("attendance", sync_attendance)):
+            try:
+                summary[name] = fn(cfg)
+            except Exception:
+                # Keywords, not positions: a traceback in the 140-char title
+                # field raises inside this handler and kills the whole job.
+                frappe.log_error(title=f"DeployU sync failed: {name}",
+                                 message=frappe.get_traceback())
+                summary[name] = {"error": True}
+        frappe.logger("deployu").info(json.dumps({"nightly_sync": summary}))
+        return summary
+    finally:
+        frappe.db.sql("SELECT RELEASE_LOCK(%s)", SYNC_LOCK)
