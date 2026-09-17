@@ -102,6 +102,24 @@ def _set_watermark(name, value):
     frappe.db.commit()
 
 
+def _advance_watermark(name, value):
+    """Move a watermark forward only — a full re-send must not rewind it."""
+    if value and value > _get_watermark(name):
+        _set_watermark(name, value)
+
+
+def _safe_watermark(changed, sent_count):
+    """Watermark after the first `sent_count` rows of an ascending `changed`
+    list. Many students share one timestamp (a Student Group save stamps the
+    whole section) and the delta query is `> watermark`, so the watermark may
+    only reach a timestamp once every row carrying it has been sent."""
+    if sent_count >= len(changed):
+        return changed[-1] if changed else None
+    unsent = changed[sent_count]
+    done = [c for c in changed[:sent_count] if c < unsent]
+    return done[-1] if done else None
+
+
 def _program_filter(cfg, column):
     if not cfg["programs"]:
         return "", []
@@ -302,10 +320,11 @@ def sync_students(cfg=None, full=False):
 
     # ERP batch name -> LMS batch id is resolved on the DeployU side via
     # erp_batch_mappings; we send names. Section letter parsed from group name.
-    students = []
+    students, changed = [], []  # changed[i] = changed_at of students[i]
     for r in rows:
         if not r.email or not r.roll_number:
             continue
+        changed.append(str(r.changed_at))
         sem = int(r.current_semester.split("-")[1])
         section = None
         if r.erp_group_name and "-SEM-" in r.erp_group_name:
@@ -321,10 +340,13 @@ def sync_students(cfg=None, full=False):
             "section": section,
         })
 
-    # One bad chunk must not cost the rest of the roster: log it, keep going,
-    # and hold the watermark so the next run sends the same delta again.
+    # One bad chunk must not cost the rest of the roster: log it and keep going.
+    # The watermark moves forward chunk by chunk while every chunk so far has
+    # succeeded, so a run that is killed part-way (first full send, worker
+    # restart) resumes where it stopped instead of starting over every night.
     errors, chunk_failures, resp, sent = [], [], {}, 0
-    for chunk in _chunks(students, STUDENT_BATCH):
+    for start in range(0, len(students), STUDENT_BATCH):
+        chunk = students[start : start + STUDENT_BATCH]
         try:
             resp = _post(cfg, "/api/admin/college/sync-students",
                          {"college_slug": cfg["slug"], "students": chunk})
@@ -333,6 +355,8 @@ def sync_students(cfg=None, full=False):
             continue
         sent += len(chunk)
         errors += (resp.get("errors") or []) if isinstance(resp, dict) else []
+        if not chunk_failures and not cfg["dry_run"]:
+            _advance_watermark("students", _safe_watermark(changed, start + len(chunk)))
 
     failed_chunks = len(chunk_failures)
     if failed_chunks:
@@ -340,8 +364,6 @@ def sync_students(cfg=None, full=False):
             title=f"DeployU sync: {failed_chunks} roster chunk(s) failed",
             message="\n".join(chunk_failures),
         )
-    elif not cfg["dry_run"]:
-        _set_watermark("students", str(rows[-1].changed_at))
     _log_run("students", sent, resp, errors)
     return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors)}
 
