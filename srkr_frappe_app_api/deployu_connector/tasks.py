@@ -301,7 +301,15 @@ def sync_students(cfg=None, full=False):
         JOIN `tabProgram Enrollment` pe ON pe.student = s.name AND pe.docstatus < 2
         LEFT JOIN (
             SELECT sgs.student, sg2.batch, sg2.name, sg2.modified,
-                   ROW_NUMBER() OVER (PARTITION BY sgs.student ORDER BY sg2.academic_year DESC) rn
+                   ROW_NUMBER() OVER (
+                       PARTITION BY sgs.student
+                       -- latest year first; within a year prefer the plain section
+                       -- group (…-SEM-05-A) over elective/activity subgroups
+                       -- (…-SEM-07-OE3-B23ECOE03-B3), which share the year and
+                       -- otherwise win the tie arbitrarily
+                       ORDER BY sg2.academic_year DESC,
+                                (sg2.name REGEXP '-SEM-[0-9]+-[A-Z]$') DESC,
+                                sg2.modified DESC) rn
             FROM `tabStudent Group` sg2
             JOIN `tabStudent Group Student` sgs ON sgs.parent = sg2.name
             WHERE sg2.group_based_on = 'Batch'
