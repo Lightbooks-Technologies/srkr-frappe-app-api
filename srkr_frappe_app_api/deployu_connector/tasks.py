@@ -23,7 +23,9 @@ queue with its own timeout. Run by hand with:
 
 Watermarks are stored via frappe defaults (frappe.db get/set_global), so each run
 sends only rows changed since the last successful run. Re-sends are safe — every
-DeployU endpoint is an idempotent upsert.
+DeployU endpoint is an idempotent upsert. To re-send the whole academic
+structure (e.g. after DeployU starts accepting rows it used to skip):
+    bench --site <site> execute srkr_frappe_app_api.deployu_connector.tasks.sync_structure --kwargs '{"full": true}'
 """
 import json
 import time
@@ -143,20 +145,27 @@ def _log_run(kind, sent, response, errors):
 # upsert on the DeployU side; kinds with a stable `modified` are watermarked,
 # small dimension tables (years/terms/programs) are sent in full each night.
 
-def _post_kind(cfg, kind, rows, errors):
+def _post_kind(cfg, kind, rows, errors, unresolved=None):
     resp = {}
     for chunk in _chunks(rows):
         resp = _post(cfg, "/api/admin/college/sync-structure",
                      {"college_slug": cfg["slug"], "kind": kind, "rows": chunk})
         if isinstance(resp, dict):
             errors += resp.get("errors", [])
+            if unresolved is not None:
+                unresolved.update(resp.get("unresolved_groups") or [])
     return resp
 
 
-def sync_structure(cfg=None):
+def sync_structure(cfg=None, full=False):
+    """Push the academic skeleton. Delta by default (per-kind watermarks);
+    full=True re-sends every batch, section and schedule tuple — used after a
+    DeployU-side change in what it accepts, since the watermarks have already
+    moved past the rows it previously skipped."""
     cfg = cfg or _cfg()
     errors = []
     sent = {}
+    epoch = "2000-01-01 00:00:00"
 
     # -- academic years + terms (tiny; full send, order matters: years first) --
     ays = frappe.db.sql(
@@ -197,7 +206,7 @@ def sync_structure(cfg=None):
     # -- batches: DISTINCT intake cohorts from the group `batch` field
     #    (e.g. BTECH-CSE-2023-2027) — SRKR names its Batch-type Student Groups
     #    per section-term, so the group NAME is a section, not the cohort. --
-    wm = _get_watermark("structure_batches")
+    wm = epoch if full else _get_watermark("structure_batches")
     pf, pv = _program_filter(cfg, "sg.program")
     batches = frappe.db.sql(
         f"""SELECT sg.batch AS erp_name, sg.program AS program_name,
@@ -215,12 +224,16 @@ def sync_structure(cfg=None):
             for b in batches
         ], errors)
         if not cfg["dry_run"]:
-            _set_watermark("structure_batches", str(batches[-1].modified))
+            _advance_watermark("structure_batches", str(batches[-1].modified))
     sent["batches"] = len(batches)
 
-    # -- sections (watermarked; non-batch groups — the endpoint keeps only
-    #    canonical ...SEM-NN-X letter sections and skips subgroups) --
-    wm = _get_watermark("structure_sections")
+    # -- sections (watermarked). Only canonical ...SEM-NN-X letter sections are
+    #    sections on the DeployU side — students belong to those. Lab sub-batch
+    #    groups (...SEM-NN-X-XN) are NOT sent here; their schedules are folded
+    #    onto the parent section by the schedule stage below. Elective splits
+    #    (...-OE2-..., ...-PE4-...) have no single parent and are reported by
+    #    DeployU as unresolved_groups. --
+    wm = epoch if full else _get_watermark("structure_sections")
     pf, pv = _program_filter(cfg, "sg.program")
     sections = frappe.db.sql(
         f"""SELECT sg.name AS erp_group_name, sg.program AS program_name,
@@ -237,12 +250,15 @@ def sync_structure(cfg=None):
             for s in sections
         ], errors)
         if not cfg["dry_run"]:
-            _set_watermark("structure_sections", str(sections[-1].modified))
+            _advance_watermark("structure_sections", str(sections[-1].modified))
     sent["sections"] = len(sections)
 
     # -- course schedule -> subjects + instructors + teaching assignments
-    #    (watermarked on schedule modified; DISTINCT tuples per run) --
-    wm = _get_watermark("structure_schedule")
+    #    (watermarked on schedule modified; DISTINCT tuples per run). The
+    #    student_group is sent as-is, sub-batches included: DeployU resolves a
+    #    ...SEM-NN-X-XN group to its parent section and keeps the original
+    #    group name on the assignment as erp_ref. --
+    wm = epoch if full else _get_watermark("structure_schedule")
     pf, pv = _program_filter(cfg, "sg.program")
     tuples = frappe.db.sql(
         f"""SELECT DISTINCT cs.instructor AS instructor_name, cs.course,
@@ -259,14 +275,16 @@ def sync_structure(cfg=None):
     max_wm = frappe.db.sql(
         "SELECT MAX(modified) FROM `tabCourse Schedule` WHERE modified > %s", (wm,)
     )[0][0]
+    unresolved = set()
     if tuples:
         _post_kind(cfg, "schedule", [
             {"instructor_name": r.instructor_name, "instructor_email": r.instructor_email,
-             "course": r.course, "student_group": r.student_group, "program": r.program}
+             "course": r.course, "student_group": r.student_group, "program": r.program,
+             "erp_ref": r.student_group}
             for r in tuples
-        ], errors)
+        ], errors, unresolved=unresolved)
         if not cfg["dry_run"] and max_wm:
-            _set_watermark("structure_schedule", str(max_wm))
+            _advance_watermark("structure_schedule", str(max_wm))
     sent["schedule_tuples"] = len(tuples)
 
     # -- finalize: regenerate cohort->lab rows + collect the unmapped report --
@@ -274,6 +292,10 @@ def sync_structure(cfg=None):
                  {"college_slug": cfg["slug"], "kind": "finalize", "rows": []}) if not cfg["dry_run"] else {"dry_run": True}
     if isinstance(resp, dict) and resp.get("unmapped_subjects"):
         frappe.logger("deployu").info(json.dumps({"unmapped_lab_subjects": resp["unmapped_subjects"]}))
+    if unresolved:
+        frappe.logger("deployu").info(json.dumps(
+            {"unresolved_schedule_groups": sorted(unresolved)[:50], "count": len(unresolved)}))
+        sent["unresolved_groups"] = len(unresolved)
 
     _log_run("structure", sent, resp, errors)
     return {"sent": sent, "errors": len(errors)}
