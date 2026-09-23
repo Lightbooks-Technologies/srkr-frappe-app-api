@@ -15,6 +15,16 @@ Configuration (site_config.json):
 Scheduling (hooks.py):
     "cron": { "0 3 * * *": ["srkr_frappe_app_api.deployu_connector.tasks.nightly_sync"] }
     (03:00 IST — after the 02:00 srkr_reports full rebuild, so summaries are fresh.)
+    "cron": { "15 * * * *": ["...tasks.hourly_roster_sync"] }  — hourly roster delta.
+    doc_events on Student / Program Enrollment / Student Group → enqueue_roster_delta:
+    an enrolment, email change, roll-number change or section move reaches
+    DeployU within seconds of being saved, not at 03:00.
+
+Identity: every roster row carries erp_student_id (= Student.name), which
+DeployU keys on — the roll number (temporary → permanent) and the email
+(personal Gmail → college address) can both change without losing the account.
+After the weekly FULL roster run, DeployU is asked to reconcile: active
+students it did not see in that run are marked dropped.
 
 Cron scheduler events run on the default RQ queue (300s timeout), which the
 sync cannot fit in: nightly_sync only enqueues run_nightly_sync on the long
@@ -29,6 +39,7 @@ structure (e.g. after DeployU starts accepting rows it used to skip):
 """
 import json
 import time
+from datetime import datetime, timezone
 
 import frappe
 import requests
@@ -311,6 +322,7 @@ def sync_students(cfg=None, full=False):
     full=True re-sends everyone (first run, weekly safety net, manual repair)."""
     cfg = cfg or _cfg()
     wm = "2000-01-01 00:00:00" if full else _get_watermark("students")
+    run_started = datetime.now(timezone.utc).isoformat()
     pf, pv = _program_filter(cfg, "pe.program")
     rows = frappe.db.sql(
         f"""
@@ -364,6 +376,7 @@ def sync_students(cfg=None, full=False):
             "email": r.email,
             "full_name": r.student_name,
             "roll_number": r.roll_number,
+            "erp_student_id": r.erp_id,
             "erp_batch_name": r.erp_batch_name,
             "current_year": (sem + 1) // 2,
             "current_sem_number": sem,
@@ -394,8 +407,63 @@ def sync_students(cfg=None, full=False):
             title=f"DeployU sync: {failed_chunks} roster chunk(s) failed",
             message="\n".join(chunk_failures),
         )
-    _log_run("students", sent, resp, errors)
-    return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors)}
+
+    # After a complete FULL run DeployU knows everyone the ERP still has:
+    # students it did not see since run_started (disabled / removed in the
+    # ERP) are marked dropped there. DeployU refuses (409) if that would be
+    # more than a fifth of the college — a broken run, not a mass exodus.
+    reconcile = None
+    if full and sent and not failed_chunks and not cfg["dry_run"]:
+        try:
+            reconcile = _post(cfg, "/api/admin/college/sync-students",
+                              {"college_slug": cfg["slug"], "reconcile": {"since": run_started}})
+        except requests.HTTPError as e:
+            body = getattr(e.response, "text", "")[:500]
+            frappe.log_error(title="DeployU sync: roster reconcile refused",
+                             message=f"{e}\n{body}")
+            reconcile = {"error": str(e)}
+    _log_run("students", sent, {"last_chunk": resp, "reconcile": reconcile}, errors)
+    return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors), "reconcile": reconcile}
+
+
+def enqueue_roster_delta(doc=None, method=None):
+    """doc_events hook (Student, Program Enrollment, Student Group) AND the
+    hourly cron land here: queue ONE watermark-based roster delta after the
+    transaction commits. job_id + deduplicate mean a burst of edits (a class
+    being enrolled, a section being rebuilt) becomes a single job; an edit
+    that arrives while a delta is already running is picked up by the next
+    hourly run because the watermark only advances to what was sent."""
+    cfg = _cfg()
+    if not cfg["enabled"]:
+        return
+    frappe.enqueue(
+        "srkr_frappe_app_api.deployu_connector.tasks.run_roster_delta",
+        queue="long",
+        timeout=JOB_TIMEOUT,
+        job_id="deployu-roster-delta",
+        deduplicate=True,
+        enqueue_after_commit=True,
+    )
+
+
+def hourly_roster_sync():
+    """Cron (hourly). Cheap when nothing changed: one watermark query."""
+    enqueue_roster_delta()
+
+
+def run_roster_delta():
+    """Long-queue job: delta roster push. Skips (not fails) when the nightly
+    run holds the lock — that run sends the same changes."""
+    cfg = _cfg()
+    if not cfg["enabled"]:
+        return
+    if not frappe.db.sql("SELECT GET_LOCK(%s, 0)", SYNC_LOCK)[0][0]:
+        frappe.logger("deployu").info("roster delta skipped — nightly sync holds the lock")
+        return
+    try:
+        return sync_students(cfg, full=False)
+    finally:
+        frappe.db.sql("SELECT RELEASE_LOCK(%s)", SYNC_LOCK)
 
 
 # --------------------------------------------------------------------------
