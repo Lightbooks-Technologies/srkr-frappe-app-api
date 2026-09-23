@@ -147,13 +147,20 @@ override_doctype_class = {
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+# DeployU connector — push roster changes as they happen (see
+# deployu_connector/tasks.py enqueue_roster_delta): one deduplicated delta
+# job per burst of edits, after commit. No-op unless deployu_sync_enabled=1.
+_deployu_delta = "srkr_frappe_app_api.deployu_connector.tasks.enqueue_roster_delta"
+doc_events = {
+    "Student": {"on_update": _deployu_delta},
+    "Program Enrollment": {
+        "on_update": _deployu_delta,
+        "on_submit": _deployu_delta,
+        "on_update_after_submit": _deployu_delta,
+        "on_cancel": _deployu_delta,
+    },
+    "Student Group": {"on_update": _deployu_delta},
+}
 
 # Scheduled Tasks
 # ---------------
@@ -172,6 +179,11 @@ scheduler_events = {
         # deployu_sync_enabled=1.
         "0 3 * * *": [
             "srkr_frappe_app_api.deployu_connector.tasks.nightly_sync"
+        ],
+        # DeployU connector — hourly roster delta (enrolments, email / roll
+        # number / section changes) so students don't wait for 03:00.
+        "15 * * * *": [
+            "srkr_frappe_app_api.deployu_connector.tasks.hourly_roster_sync"
         ],
         # Absent-student parent SMS. The 18:00 run dispatches batch jobs to the
         # long queue; 19:00 re-dispatches whatever the first run didn't reach
