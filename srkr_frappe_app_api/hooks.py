@@ -214,7 +214,10 @@ scheduler_events = {
         ],
         # srkr_reports summary refresh for the external academics portal:
         # incremental every 20 min, full rebuild + delete reconciliation at 2 AM
-        "*/20 * * * *": [
+        # Hourly (was */20): the term-wide REPLACE rebuild is heavy enough that
+        # overlapping daytime runs helped starve the DB on 2026-09-08; portal
+        # dashboards tolerate data up to an hour old.
+        "0 * * * *": [
             "srkr_frappe_app_api.srkr_reports_sync.tasks.incremental_refresh"
         ],
         "0 2 * * *": [
