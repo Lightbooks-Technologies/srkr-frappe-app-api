@@ -6,7 +6,10 @@ from frappe.utils import add_days, formatdate, getdate
 from education.education.doctype.course_scheduling_tool.course_scheduling_tool import (
 	CourseSchedulingTool,
 )
+from education.education.doctype.program_enrollment.program_enrollment import ProgramEnrollment
 from education.education.utils import OverlapError, get_overlap_for
+
+FIRST_SEMESTER = "SEM-01"
 
 SRKR_PERIODS = {
 	"P1": ("09:00:00", "09:45:00"),
@@ -177,3 +180,56 @@ class CustomCourseSchedulingTool(CourseSchedulingTool):
 			rows=created,
 			skipped_holidays=holidays_in_range,
 		)
+
+
+class CustomProgramEnrollment(ProgramEnrollment):
+	"""Program Enrollment that enrolls courses by regulation and semester.
+
+	Stock `get_courses` returns every required Program Course for the program, so a
+	new R26 student also got R20/R23 courses of every semester. Here a draft only gets
+	required Program Course rows matching its regulation and current semester.
+
+	Regulation comes from the Student Batch Name and a new enrollment starts at SEM-01.
+	The Program Enrollment Tool saves once before it sets the batch, so with no
+	regulation yet the courses stay empty; the next save (batch set) fills them.
+	"""
+
+	def validate(self):
+		self.set_regulation_and_semester()
+		super().validate()
+
+	def set_regulation_and_semester(self):
+		if self.docstatus != 0:
+			return
+
+		if not self.regulation and self.student_batch_name:
+			self.regulation = frappe.db.get_value("Student Batch Name", self.student_batch_name, "regulation")
+
+		if not self.current_semester and self.is_new():
+			self.current_semester = FIRST_SEMESTER
+
+	@frappe.whitelist()
+	def get_courses(self):
+		if not (self.regulation and self.current_semester):
+			return []
+
+		courses = frappe.get_all(
+			"Program Course",
+			filters={
+				"parent": self.program,
+				"parenttype": "Program",
+				"required": 1,
+				"regulation": self.regulation,
+				"semester": self.current_semester,
+			},
+			fields=["course"],
+			order_by="idx",
+		)
+		if not courses:
+			frappe.msgprint(
+				frappe._("No required {0} {1} courses found for {2}").format(
+					self.regulation, self.current_semester, self.program
+				),
+				indicator="orange",
+			)
+		return courses
