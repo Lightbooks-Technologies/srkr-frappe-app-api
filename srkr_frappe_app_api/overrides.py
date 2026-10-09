@@ -183,11 +183,13 @@ class CustomCourseSchedulingTool(CourseSchedulingTool):
 
 
 class CustomProgramEnrollment(ProgramEnrollment):
-	"""Program Enrollment that enrolls courses by regulation and semester.
+	"""Program Enrollment that enrolls courses by regulation.
 
 	Stock `get_courses` returns every required Program Course for the program, so a
-	new R26 student also got R20/R23 courses of every semester. Here a draft only gets
-	required Program Course rows matching its regulation and current semester.
+	new R26 student also got R20/R23 courses. Here a draft only gets the required
+	Program Course rows of its own regulation, from every semester defined for it.
+	The semester is not a filter, so a lateral-entry student in an R23 batch gets the
+	R23 courses whatever semester they start in.
 
 	Regulation comes from the Student Batch Name and a new enrollment starts at SEM-01.
 	The Program Enrollment Tool saves once before it sets the batch, so with no
@@ -210,7 +212,7 @@ class CustomProgramEnrollment(ProgramEnrollment):
 
 	@frappe.whitelist()
 	def get_courses(self):
-		if not (self.regulation and self.current_semester):
+		if not self.regulation:
 			return []
 
 		courses = frappe.get_all(
@@ -220,16 +222,13 @@ class CustomProgramEnrollment(ProgramEnrollment):
 				"parenttype": "Program",
 				"required": 1,
 				"regulation": self.regulation,
-				"semester": self.current_semester,
 			},
 			fields=["course"],
 			order_by="idx",
 		)
 		if not courses:
 			frappe.msgprint(
-				frappe._("No required {0} {1} courses found for {2}").format(
-					self.regulation, self.current_semester, self.program
-				),
+				frappe._("No required {0} courses found for {1}").format(self.regulation, self.program),
 				indicator="orange",
 			)
 		return courses
