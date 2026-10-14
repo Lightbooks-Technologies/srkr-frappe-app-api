@@ -18,6 +18,33 @@ import frappe
 REPORTS_SCHEMA = "srkr_reports"
 LAST_RUN_KEY = "srkr_reports_sync_last_run"
 
+
+def _non_locking_reads():
+    """Make the REPLACE ... SELECT aggregations read without locking.
+
+    Under InnoDB's default REPEATABLE READ, INSERT/REPLACE ... SELECT takes a
+    shared next-key lock on EVERY source row it reads and holds it until the
+    transaction commits. For a term that is ~2.4M `tabStudent Attendance` rows
+    (observed 2026-10-14: 7.3M row locks held for ~4 min by one refresh run),
+    which blocks every teacher's attendance INSERT/UPDATE during the run ->
+    "Lock wait timeout exceeded" after 50s -> ALB 504 -> "Submission Failed"
+    on the instructor app. Dozens of classes went unmarked per day.
+
+    READ COMMITTED makes the SELECT side a consistent (non-locking) read;
+    the REPLACE still locks only the target rpt_* rows, which nothing else
+    writes. Session-scoped: the scheduler worker opens a fresh connection per
+    job, and we restore the default on exit anyway.
+    """
+    # The level applies to the NEXT transaction; Frappe runs with autocommit
+    # off, so end the one the preceding SELECTs opened first.
+    frappe.db.commit()
+    frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+
+
+def _default_isolation():
+    frappe.db.commit()
+    frappe.db.sql("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+
 # Terms are auto-discovered: any academic term that has submitted attendance.
 ACTIVE_TERMS_SQL = """
     SELECT DISTINCT sg.academic_term
@@ -164,12 +191,21 @@ def incremental_refresh():
         return
 
     now = frappe.utils.now()
-    for term in _current_terms():
-        _rebuild_term_student_course(term)
-        _rebuild_term_group_course_day(term)
-        _rebuild_term_dept_day(term)
-    frappe.db.set_global(LAST_RUN_KEY, now)
-    frappe.db.commit()
+    _non_locking_reads()
+    try:
+        for term in _current_terms():
+            # Commit after each statement: each REPLACE is idempotent, and a
+            # short transaction keeps the rpt_* target locks + undo log small.
+            _rebuild_term_student_course(term)
+            frappe.db.commit()
+            _rebuild_term_group_course_day(term)
+            frappe.db.commit()
+            _rebuild_term_dept_day(term)
+            frappe.db.commit()
+        frappe.db.set_global(LAST_RUN_KEY, now)
+        frappe.db.commit()
+    finally:
+        _default_isolation()
     frappe.logger("srkr_reports_sync").info(
         f"incremental refresh: {changed} changed rows, terms={_current_terms()}"
     )
@@ -185,10 +221,24 @@ def nightly_full_rebuild():
     submitted attendance — covering slices emptied by deletion.
     """
     terms = [r[0] for r in frappe.db.sql(ACTIVE_TERMS_SQL, as_list=True)]
+    _non_locking_reads()
+    try:
+        _nightly_full_rebuild(terms)
+    finally:
+        _default_isolation()
+    frappe.logger("srkr_reports_sync").info(
+        f"nightly rebuild complete: terms={json.dumps(terms)}"
+    )
+
+
+def _nightly_full_rebuild(terms: list[str]):
     for term in terms:
         _rebuild_term_student_course(term)
+        frappe.db.commit()
         _rebuild_term_group_course_day(term)
+        frappe.db.commit()
         _rebuild_term_dept_day(term)
+        frappe.db.commit()
 
     # Purge day-grain rows that no longer exist in the source.
     frappe.db.sql(
@@ -235,6 +285,3 @@ def nightly_full_rebuild():
 
     frappe.db.set_global(LAST_RUN_KEY, frappe.utils.now())
     frappe.db.commit()
-    frappe.logger("srkr_reports_sync").info(
-        f"nightly rebuild complete: terms={json.dumps(terms)}"
-    )
