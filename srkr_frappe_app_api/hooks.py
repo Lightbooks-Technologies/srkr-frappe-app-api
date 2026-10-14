@@ -214,8 +214,10 @@ scheduler_events = {
             "srkr_frappe_app_api.instructor.api.sync_external_attendance"
         ],
         # srkr_reports summary refresh for the external academics portal:
-        # incremental every 20 min, full rebuild + delete reconciliation at 2 AM
-        "*/20 * * * *": [
+        # incremental hourly (was */20: each run scans the whole term three
+        # times, 160-300 s; hourly cuts daytime load 3x — dashboards still
+        # refresh well within the hour), full rebuild + delete reconciliation at 2 AM
+        "0 * * * *": [
             "srkr_frappe_app_api.srkr_reports_sync.tasks.incremental_refresh"
         ],
         "0 2 * * *": [
