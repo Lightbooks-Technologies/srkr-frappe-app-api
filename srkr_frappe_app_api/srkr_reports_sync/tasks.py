@@ -11,12 +11,58 @@
 # per-term first-year floor from srkr_reports.cfg_term_settings) live in the
 # aggregation SQL below and NOWHERE else. Change them only with Dean sign-off.
 
+import datetime
 import json
 
 import frappe
 
 REPORTS_SCHEMA = "srkr_reports"
 LAST_RUN_KEY = "srkr_reports_sync_last_run"
+
+# Teachers mark attendance in the first minutes of a period. The incremental
+# job is scheduled every 5 min but self-throttles: it never starts inside a
+# period's marking window, never starts if it would still be running when
+# the next period begins, and runs at most about once an hour.
+ATTENDANCE_GRACE_MIN = 15   # quiet window after every class start (timetable-driven)
+RUN_BUDGET_MIN = 5          # longest a refresh run is expected to take
+MIN_INTERVAL_MIN = 55       # effective cadence ~hourly
+
+
+def _as_time(value) -> datetime.time:
+    """`tabCourse Schedule.from_time` comes back as timedelta from the driver."""
+    if isinstance(value, datetime.timedelta):
+        return (datetime.datetime.min + value).time()
+    if isinstance(value, datetime.datetime):
+        return value.time()
+    if isinstance(value, str):
+        return datetime.time.fromisoformat(value[:8])
+    return value
+
+
+def _refresh_allowed_now() -> bool:
+    now = frappe.utils.now_datetime()  # site timezone, same as the timetable
+    last_run = frappe.db.get_global(LAST_RUN_KEY)
+    if last_run:
+        age = (now - frappe.utils.get_datetime(last_run)).total_seconds()
+        if age < MIN_INTERVAL_MIN * 60:
+            return False
+    starts = frappe.db.sql(
+        """
+        SELECT DISTINCT from_time FROM `tabCourse Schedule`
+        WHERE schedule_date = %(today)s AND from_time IS NOT NULL
+        """,
+        {"today": now.date()},
+        as_list=True,
+    )
+    grace = datetime.timedelta(minutes=ATTENDANCE_GRACE_MIN)
+    budget = datetime.timedelta(minutes=RUN_BUDGET_MIN)
+    for (from_time,) in starts:
+        start = datetime.datetime.combine(now.date(), _as_time(from_time))
+        if start <= now < start + grace:
+            return False  # a class just started: teachers are marking now
+        if now < start < now + budget:
+            return False  # we'd still be running when that class starts
+    return True
 
 
 def _non_locking_reads():
@@ -178,6 +224,8 @@ def incremental_refresh():
     rebuild the current term(s) — cheap (one term ≈ seconds) and immune to
     partial-slice bugs. Deletes are handled nightly.
     """
+    if not _refresh_allowed_now():
+        return
     last_run = frappe.db.get_global(LAST_RUN_KEY)
     changed = frappe.db.sql(
         """
