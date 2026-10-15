@@ -146,6 +146,66 @@ def _log_run(kind, sent, response, errors):
     )
 
 
+# Students DeployU rejected (no batch mapping yet, email clash, ...) are kept
+# here and re-sent on every roster run until they go through. The watermark
+# keeps moving — a rejected student must not pin it, or every hourly delta
+# would re-send the whole roster — but the rejected rows are no longer lost.
+RETRY_KEY = "deployu_roster_retry"
+RETRY_MAX = 5000
+
+
+def _get_retry_ids():
+    try:
+        ids = json.loads(frappe.db.get_global(RETRY_KEY) or "[]")
+    except ValueError:
+        ids = []
+    return [i for i in ids if isinstance(i, str)]
+
+
+def _set_retry_ids(ids):
+    frappe.db.set_global(RETRY_KEY, json.dumps(sorted(set(ids))[:RETRY_MAX]))
+    frappe.db.commit()
+
+
+def _rejected_ids(chunk, errors):
+    """ERP student ids of the rows in `chunk` that DeployU rejected. Its error
+    strings start with the student's email or roll number followed by ': '."""
+    by_key = {}
+    for s in chunk:
+        by_key[(s.get("email") or "").lower()] = s["erp_student_id"]
+        by_key[(s.get("roll_number") or "").lower()] = s["erp_student_id"]
+    by_key.pop("", None)
+    rejected = set()
+    for e in errors:
+        key = str(e).split(":", 1)[0].strip().lower()
+        if key in by_key:
+            rejected.add(by_key[key])
+    return rejected
+
+
+def _reason(error):
+    """'<who>: erp_batch_name "X" has no mapping — ...' -> 'erp_batch_name "X" has no mapping'."""
+    text = str(error).split(":", 1)[-1].strip()
+    return text.split(" — ")[0].split(" - ")[0][:120]
+
+
+def _report_rejections(errors, rejected, skipped, retry_pending):
+    """Rejections used to reach only logs/deployu.log, which nobody reads. Put
+    a per-run summary in Error Log so a stuck cohort shows up in Desk."""
+    if not errors and not skipped:
+        return
+    reasons = {}
+    for e in errors:
+        reasons[_reason(e)] = reasons.get(_reason(e), 0) + 1
+    lines = [f"rejected by DeployU this run: {len(rejected)} (error lines: {len(errors)})",
+             f"skipped on the ERP side (no email or roll number): {skipped}",
+             f"queued for retry on the next roster run: {retry_pending}", "", "reasons:"]
+    lines += [f"  {n:5d}  {r}" for r, n in sorted(reasons.items(), key=lambda x: -x[1])]
+    lines += ["", "first error lines:"] + [f"  {e}" for e in errors[:20]]
+    frappe.log_error(title=f"DeployU roster: {len(rejected)} rejected, {skipped} skipped",
+                     message="\n".join(lines))
+
+
 # --------------------------------------------------------------------------
 # 0. structure (academic years/terms, programs, batches, sections, schedule)
 # --------------------------------------------------------------------------
@@ -176,8 +236,31 @@ def sync_structure(cfg=None, full=False):
     cfg = cfg or _cfg()
     errors = []
     sent = {}
-    epoch = "2000-01-01 00:00:00"
 
+    _sync_dimensions(cfg, errors, sent)
+    _sync_groups(cfg, full, errors, sent)
+    _sync_schedule(cfg, full, errors, sent)
+
+    _log_run("structure", sent, {}, errors)
+    return {"sent": sent, "errors": len(errors)}
+
+
+def sync_groups(cfg=None):
+    """Batches + sections only (plus the tiny dimension tables they depend on).
+    Cheap when nothing changed; run before every roster delta so a student is
+    never pushed before the batch mapping / section group he belongs to exists
+    in DeployU. Oct 2026: 1,700 first-years were rejected for exactly that —
+    enrolled on the 6th-10th, groups created on the 12th, mappings only on the
+    nightly run after — and the watermark had moved past them."""
+    cfg = cfg or _cfg()
+    errors, sent = [], {}
+    _sync_dimensions(cfg, errors, sent)
+    _sync_groups(cfg, False, errors, sent)
+    _log_run("groups", sent, {}, errors)
+    return {"sent": sent, "errors": len(errors)}
+
+
+def _sync_dimensions(cfg, errors, sent):
     # -- academic years + terms (tiny; full send, order matters: years first) --
     ays = frappe.db.sql(
         """SELECT name, year_start_date AS start_date, year_end_date AS end_date
@@ -214,6 +297,9 @@ def sync_structure(cfg=None, full=False):
         _post_kind(cfg, "academic_terms", terms, errors)
     sent["academic_terms"] = len(terms)
 
+
+def _sync_groups(cfg, full, errors, sent):
+    epoch = "2000-01-01 00:00:00"
     # -- batches: DISTINCT intake cohorts from the group `batch` field
     #    (e.g. BTECH-CSE-2023-2027) — SRKR names its Batch-type Student Groups
     #    per section-term, so the group NAME is a section, not the cohort. --
@@ -264,6 +350,9 @@ def sync_structure(cfg=None, full=False):
             _advance_watermark("structure_sections", str(sections[-1].modified))
     sent["sections"] = len(sections)
 
+
+def _sync_schedule(cfg, full, errors, sent):
+    epoch = "2000-01-01 00:00:00"
     # -- course schedule -> subjects + instructors + teaching assignments
     #    (watermarked on schedule modified; DISTINCT tuples per run). The
     #    student_group is sent as-is, sub-batches included: DeployU resolves a
@@ -307,9 +396,7 @@ def sync_structure(cfg=None, full=False):
         frappe.logger("deployu").info(json.dumps(
             {"unresolved_schedule_groups": sorted(unresolved)[:50], "count": len(unresolved)}))
         sent["unresolved_groups"] = len(unresolved)
-
-    _log_run("structure", sent, resp, errors)
-    return {"sent": sent, "errors": len(errors)}
+    sent["finalize"] = resp
 
 
 # --------------------------------------------------------------------------
@@ -324,6 +411,9 @@ def sync_students(cfg=None, full=False):
     wm = "2000-01-01 00:00:00" if full else _get_watermark("students")
     run_started = datetime.now(timezone.utc).isoformat()
     pf, pv = _program_filter(cfg, "pe.program")
+    # Students rejected on earlier runs come along regardless of the watermark.
+    retry_ids = [] if full else _get_retry_ids()
+    retry_clause = f" OR s.name IN ({', '.join(['%s'] * len(retry_ids))})" if retry_ids else ""
     rows = frappe.db.sql(
         f"""
         SELECT s.name AS erp_id, s.student_name, s.custom_student_id AS roll_number,
@@ -350,10 +440,10 @@ def sync_students(cfg=None, full=False):
         ) sg ON sg.student = s.name AND sg.rn = 1
         WHERE s.enabled = 1 AND s.custom_student_id IS NOT NULL
           AND pe.current_semester LIKE 'SEM-%%'{pf}
-          AND GREATEST(s.modified, pe.modified, COALESCE(sg.modified, s.modified)) > %s
+          AND (GREATEST(s.modified, pe.modified, COALESCE(sg.modified, s.modified)) > %s{retry_clause})
         ORDER BY changed_at
         """,
-        pv + [wm],
+        pv + [wm] + retry_ids,
         as_dict=True,
     )
     if not rows:
@@ -363,8 +453,10 @@ def sync_students(cfg=None, full=False):
     # ERP batch name -> LMS batch id is resolved on the DeployU side via
     # erp_batch_mappings; we send names. Section letter parsed from group name.
     students, changed = [], []  # changed[i] = changed_at of students[i]
+    skipped = 0  # rows the ERP side cannot send at all: no email or no roll number
     for r in rows:
         if not r.email or not r.roll_number:
+            skipped += 1
             continue
         changed.append(str(r.changed_at))
         sem = int(r.current_semester.split("-")[1])
@@ -387,7 +479,11 @@ def sync_students(cfg=None, full=False):
     # The watermark moves forward chunk by chunk while every chunk so far has
     # succeeded, so a run that is killed part-way (first full send, worker
     # restart) resumes where it stopped instead of starting over every night.
+    # A chunk that comes back 200 can still carry per-student rejections in
+    # `errors` (no batch mapping yet, email already taken, ...). Those students
+    # go on the retry list instead of being lost behind the watermark.
     errors, chunk_failures, resp, sent = [], [], {}, 0
+    rejected, accepted = set(), set()
     for start in range(0, len(students), STUDENT_BATCH):
         chunk = students[start : start + STUDENT_BATCH]
         try:
@@ -397,9 +493,18 @@ def sync_students(cfg=None, full=False):
             chunk_failures.append(f"chunk starting {chunk[0]['roll_number']}: {e}")
             continue
         sent += len(chunk)
-        errors += (resp.get("errors") or []) if isinstance(resp, dict) else []
+        chunk_errors = (resp.get("errors") or []) if isinstance(resp, dict) else []
+        errors += chunk_errors
+        bad = _rejected_ids(chunk, chunk_errors)
+        rejected |= bad
+        accepted |= {s["erp_student_id"] for s in chunk} - bad
         if not chunk_failures and not cfg["dry_run"]:
             _advance_watermark("students", _safe_watermark(changed, start + len(chunk)))
+
+    retry_pending = (set(retry_ids) - accepted) | rejected
+    if not cfg["dry_run"]:
+        _set_retry_ids(retry_pending)
+    _report_rejections(errors, rejected, skipped, len(retry_pending))
 
     failed_chunks = len(chunk_failures)
     if failed_chunks:
@@ -422,8 +527,12 @@ def sync_students(cfg=None, full=False):
             frappe.log_error(title="DeployU sync: roster reconcile refused",
                              message=f"{e}\n{body}")
             reconcile = {"error": str(e)}
-    _log_run("students", sent, {"last_chunk": resp, "reconcile": reconcile}, errors)
-    return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors), "reconcile": reconcile}
+    _log_run("students", sent, {"last_chunk": resp, "reconcile": reconcile,
+                                "rejected": len(rejected), "skipped": skipped,
+                                "retry_pending": len(retry_pending)}, errors)
+    return {"sent": sent, "failed_chunks": failed_chunks, "errors": len(errors),
+            "rejected": len(rejected), "skipped": skipped, "retry_pending": len(retry_pending),
+            "reconcile": reconcile}
 
 
 def enqueue_roster_delta(doc=None, method=None):
@@ -461,6 +570,14 @@ def run_roster_delta():
         frappe.logger("deployu").info("roster delta skipped — nightly sync holds the lock")
         return
     try:
+        # Groups first: a Student Group saved minutes ago must exist in DeployU
+        # (batch mapping + section) before the students in it are pushed. A
+        # structure failure is logged and must not stop the roster.
+        try:
+            sync_groups(cfg)
+        except Exception:
+            frappe.log_error(title="DeployU sync failed: groups (before roster delta)",
+                             message=frappe.get_traceback())
         return sync_students(cfg, full=False)
     finally:
         frappe.db.sql("SELECT RELEASE_LOCK(%s)", SYNC_LOCK)
