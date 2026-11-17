@@ -35,6 +35,35 @@ ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS = [
 # FALLBACK: Used if SMS Notification Settings are not available.
 DAILY_SUMMARY_REQUIRED_PATTERNS = ["BTECH", "SEM-01", "SEM-04", "SEM-06"]
 
+# Group-matching rules: a list of [category, [semester patterns]]. A student group
+# matches if it matches ANY rule: it must contain the category, and (if the rule
+# lists semesters) at least one of them. An empty semester list means "all
+# semesters" for that category. Group names look like "BBA-AY2627-SEM-03-A".
+# FALLBACK rules, used only if SMS Notification Settings can't be loaded.
+FALLBACK_GROUP_RULES = [["BTECH", ["SEM-01", "SEM-04", "SEM-06"]], ["BBA", ["SEM-03", "SEM-05"]]]
+
+
+def _build_group_rules(settings, btech_cat_field, btech_sem_fmt, bba_cat_field, bba_sem_fmt):
+    """Build matching rules from the settings doc. BTECH keeps its old semantics
+    (no semesters ticked = all). BBA is only active when >=1 semester is ticked."""
+    rules = []
+    btech_sems = [f"SEM-0{i}" for i in range(1, 9) if settings.get(btech_sem_fmt.format(i))]
+    rules.append([settings.get(btech_cat_field) or "BTECH", btech_sems])
+    bba_sems = [f"SEM-0{i}" for i in range(1, 9) if settings.get(bba_sem_fmt.format(i))]
+    if bba_sems:
+        rules.append([settings.get(bba_cat_field) or "BBA", bba_sems])
+    return rules
+
+
+def _group_matches(student_group, rules):
+    """True if student_group matches any [category, semesters] rule."""
+    if not student_group:
+        return False
+    for category, semesters in rules:
+        if category in student_group and (not semesters or any(p in student_group for p in semesters)):
+            return True
+    return False
+
 # NOTE: Get these Template IDs from your SMS provider.
 WEEKLY_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399999' # Replace with actual ID
 CUMULATIVE_ATTENDANCE_SUMMARY_TEMPLATE = '1707163646397399888' # Replace with actual ID
@@ -475,21 +504,15 @@ def _get_daily_summary_patterns():
             print("Daily Attendance Summary SMS is disabled in 'SMS Notification Settings'. Skipping.")
             return None
 
-        # EMERGENCY FALLBACK: Check if we should ignore UI and use code
-        if sms_settings.ignore_ui_and_use_code_defaults:
-            print("EMERGENCY FALLBACK: 'Ignore UI' is checked. Using hardcoded patterns from api.py")
-            return DAILY_SUMMARY_REQUIRED_PATTERNS
-
         # Load from UI (Checkboxes)
-        category = sms_settings.daily_summary_category or "BTECH"
-        semesters = [f"SEM-0{i}" for i in range(1, 9) if sms_settings.get(f"sem_0{i}")]
-        current_patterns = [category] + semesters
-        print(f"Using UI-configured patterns: {current_patterns}")
-        return current_patterns
+        rules = _build_group_rules(sms_settings, "daily_summary_category", "sem_0{}",
+                                   "bba_daily_summary_category", "bba_sem_0{}")
+        print(f"Using UI-configured group rules: {rules}")
+        return rules
     except Exception:
         # Fallback to hardcoded constants if the DocType hasn't been migrated or doesn't exist
         print("Note: 'SMS Notification Settings' not found or error occurred. Falling back to hardcoded patterns.")
-        return DAILY_SUMMARY_REQUIRED_PATTERNS
+        return FALLBACK_GROUP_RULES
 
 
 def _get_notified_students(processing_date):
@@ -626,15 +649,9 @@ def process_attendance_summary_batch(student_ids, processing_date, current_patte
                 print(f"Skipping student {student_id} as student_group is missing.")
                 continue
 
-            if current_patterns:
-                # "BTECH" (the category) is mandatory, and at least one of the
-                # other patterns (e.g., semesters) must match.
-                has_category = current_patterns[0] in student_group
-                other_patterns = current_patterns[1:]
-                has_other = any(p in student_group for p in other_patterns) if other_patterns else True
-                if not (has_category and has_other):
-                    print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {current_patterns}.")
-                    continue
+            if current_patterns and not _group_matches(student_group, current_patterns):
+                print(f"Skipping student {student_id} from group '{student_group}' as it does not match criteria {current_patterns}.")
+                continue
 
             if not mobile_no:
                 print(f"Warning: No mobile number for student {student_id}. Skipping.")
@@ -683,20 +700,14 @@ def send_instructor_attendance_reminders():
             print("Instructor Attendance Reminder SMS is disabled in 'SMS Notification Settings'. Skipping.")
             return
         
-        # Load from UI (Checkboxes)
-        instr_category = sms_settings.instructor_attendance_category or "BTECH"
-        instr_semesters = []
-        for i in range(1, 9):
-            fieldname = f"instructor_sem_0{i}"
-            if sms_settings.get(fieldname):
-                instr_semesters.append(f"SEM-0{i}")
-        
-        instr_current_patterns = [instr_category] + instr_semesters
-        print(f"Using UI-configured patterns for instructor reminders: {instr_current_patterns}")
+        instr_current_patterns = _build_group_rules(
+            sms_settings, "instructor_attendance_category", "instructor_sem_0{}",
+            "instructor_bba_category", "instructor_bba_sem_0{}")
+        print(f"Using UI-configured group rules for instructor reminders: {instr_current_patterns}")
     except (frappe.DoesNotExistError, Exception):
         # Fallback to hardcoded constants
         print("Note: 'SMS Notification Settings' not found or error occurred for instructors. Falling back to hardcoded patterns.")
-        instr_current_patterns = ["BTECH"] + ACTIVE_STUDENT_GROUP_PATTERNS_FOR_REMINDERS
+        instr_current_patterns = FALLBACK_GROUP_RULES
     # --------------------------
 
     processing_date = today()
@@ -751,15 +762,9 @@ def send_instructor_attendance_reminders():
             is_relevant_pending = False
             for schedule in pending_schedule_groups:
                 student_group = schedule.get("student_group")
-                if student_group:
-                    # Logic: Must have category AND (at least one semester OR no semesters selected)
-                    has_category = instr_current_patterns[0] in student_group if instr_current_patterns else True
-                    other_patterns = instr_current_patterns[1:] if len(instr_current_patterns) > 1 else []
-                    has_other = any(p in student_group for p in other_patterns) if other_patterns else True
-                    
-                    if has_category and has_other:
-                        is_relevant_pending = True
-                        break # A relevant class was found, no need to check further
+                if _group_matches(student_group, instr_current_patterns):
+                    is_relevant_pending = True
+                    break # A relevant class was found, no need to check further
 
             # If none of the pending classes were for active groups, skip this instructor.
             if not is_relevant_pending:
