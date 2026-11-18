@@ -142,6 +142,7 @@ permission_query_conditions = {
 override_doctype_class = {
     "Course Scheduling Tool": "srkr_frappe_app_api.overrides.CustomCourseSchedulingTool",
     "Program Enrollment": "srkr_frappe_app_api.overrides.CustomProgramEnrollment",
+    "Student": "srkr_frappe_app_api.overrides.CustomStudent",
 }
 
 # Document Events

@@ -7,6 +7,7 @@ from education.education.doctype.course_scheduling_tool.course_scheduling_tool i
 	CourseSchedulingTool,
 )
 from education.education.doctype.program_enrollment.program_enrollment import ProgramEnrollment
+from education.education.doctype.student.student import Student
 from education.education.utils import OverlapError, get_overlap_for
 
 FIRST_SEMESTER = "SEM-01"
@@ -232,3 +233,69 @@ class CustomProgramEnrollment(ProgramEnrollment):
 				indicator="orange",
 			)
 		return courses
+
+
+class CustomStudent(Student):
+	"""Student whose email edits update the linked User instead of creating a new one.
+
+	Stock Education.validate_user only checks whether a User with the *new*
+	email exists; if not, it creates a second User, repoints `user` to it and
+	sends a welcome email, leaving the old User enabled and orphaned.
+
+	Here:
+	  * email changed + student already has a linked User -> rename that User to
+	    the new email (frappe.rename_doc updates every link and sets `email`);
+	    nothing is created, no email is sent, `enabled` is left as is. If a
+	    different User already owns the new email we throw instead.
+	  * no linked User -> create one, but disabled and without a welcome email,
+	    since students must not be able to log in yet.
+	"""
+
+	def validate_user(self):
+		if frappe.db.get_single_value("Education Settings", "user_creation_skip"):
+			return
+
+		new_email = (self.student_email_id or "").strip().lower()
+		if not new_email:
+			return
+
+		if self.user and frappe.db.exists("User", self.user):
+			if self.user.lower() != new_email:
+				self._rename_linked_user(new_email)
+			return
+
+		if not frappe.db.exists("User", new_email):
+			self._create_disabled_user(new_email)
+
+	def _rename_linked_user(self, new_email):
+		if frappe.db.exists("User", new_email):
+			frappe.throw(
+				frappe._("A User with email {0} already exists, so Student {1} cannot be moved to it.").format(
+					new_email, self.name
+				)
+			)
+
+		old_user = self.user
+		frappe.rename_doc("User", old_user, new_email, force=True, show_alert=False)
+		self.user = new_email
+		frappe.msgprint(
+			frappe._("User {0} renamed to {1}").format(old_user, new_email), alert=True
+		)
+
+	def _create_disabled_user(self, email):
+		user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"first_name": self.first_name,
+				"last_name": self.last_name,
+				"email": email,
+				"gender": self.gender,
+				"enabled": 0,
+				"send_welcome_email": 0,
+				"user_type": "Website User",
+			}
+		)
+		user.add_roles("Student")
+		user.flags.no_welcome_mail = True
+		user.save(ignore_permissions=True)
+		self.user = user.name
