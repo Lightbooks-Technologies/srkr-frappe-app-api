@@ -266,3 +266,45 @@ def get_student_daily_class_attendance(student, start_date, end_date=None):
         detailed_attendance.append(entry)
 
     return detailed_attendance
+
+
+# ---------------------------------------------------------------------------
+# DeployU single sign-out (RP-initiated logout)
+# ---------------------------------------------------------------------------
+
+# Hosts the browser may be sent back to after the ERP session ends.
+SSO_RETURN_HOSTS = ("deployu.ai",)
+
+
+def _sso_return_url(redirect_to):
+    """Only ever redirect to DeployU (https) or an ERP-relative path."""
+    from urllib.parse import urlparse
+
+    if not redirect_to:
+        return "/login"
+    if redirect_to.startswith("/") and not redirect_to.startswith("//"):
+        return redirect_to
+    parts = urlparse(redirect_to)
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in SSO_RETURN_HOSTS):
+        return redirect_to
+    return "/login"
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def sso_logout(redirect_to=None):
+    """End the ERP browser session, then send the browser back to DeployU.
+
+    DeployU's "Sign in with Lightbooks ERP" is Frappe OAuth2 with Skip
+    Authorization on, so while the ERP session cookie lives that button signs
+    the same person straight back in with no password. DeployU's sign-out
+    therefore lands here first and returns to its login page:
+
+        GET /api/method/srkr_frappe_app_api.api.sso_logout?redirect_to=https://srkr.deployu.ai/login
+
+    Stock ``web_logout`` ends the session but cannot redirect, hence this.
+    """
+    frappe.local.login_manager.logout()
+    frappe.db.commit()
+    frappe.local.response["type"] = "redirect"
+    frappe.local.response["location"] = _sso_return_url(redirect_to)
