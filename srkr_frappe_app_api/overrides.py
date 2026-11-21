@@ -261,7 +261,15 @@ class CustomStudent(Student):
 			return
 
 		if self.user and frappe.db.exists("User", self.user):
-			if self.user.lower() != new_email:
+			# Only when this save changes the email. On prod about 1,300 students
+			# already have a linked User that differs from their email while another
+			# User owns that email (left by earlier edits). Comparing user and email
+			# on every save would make each of them fail validation on any edit.
+			if (
+				self.user.lower() != new_email
+				and not self.is_new()
+				and self.has_value_changed("student_email_id")
+			):
 				self._rename_linked_user(new_email)
 			return
 
@@ -275,6 +283,19 @@ class CustomStudent(Student):
 					new_email, self.name
 				)
 			)
+
+		# The background rename skips the owner/modified_by rewrite, which is only
+		# safe for an account that has never been used. A student who has logged in
+		# may own documents, so leave that User alone and say so.
+		if frappe.db.get_value("User", self.user, "last_login"):
+			frappe.msgprint(
+				frappe._(
+					"User {0} has logged in before, so it was not renamed to {1}. "
+					"An administrator can rename it from the User list."
+				).format(self.user, new_email),
+				indicator="orange",
+			)
+			return
 
 		# Renaming a User rewrites links/owner/modified_by across ~1000 tables, which
 		# takes long enough inside a web request to hold row locks and time out
@@ -327,6 +348,8 @@ def rename_student_user(student):
 			f"Cannot rename user {row.user} for {student}: {new_email} already exists",
 			"Student user rename",
 		)
+		return
+	if frappe.db.get_value("User", row.user, "last_login"):
 		return
 
 	frappe.flags.in_student_user_rename = True
