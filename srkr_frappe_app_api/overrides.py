@@ -8,6 +8,7 @@ from education.education.doctype.course_scheduling_tool.course_scheduling_tool i
 )
 from education.education.doctype.program_enrollment.program_enrollment import ProgramEnrollment
 from education.education.doctype.student.student import Student
+from frappe.core.doctype.user.user import User
 from education.education.utils import OverlapError, get_overlap_for
 
 FIRST_SEMESTER = "SEM-01"
@@ -260,7 +261,15 @@ class CustomStudent(Student):
 			return
 
 		if self.user and frappe.db.exists("User", self.user):
-			if self.user.lower() != new_email:
+			# Only when this save changes the email. On prod about 1,300 students
+			# already have a linked User that differs from their email while another
+			# User owns that email (left by earlier edits). Comparing user and email
+			# on every save would make each of them fail validation on any edit.
+			if (
+				self.user.lower() != new_email
+				and not self.is_new()
+				and self.has_value_changed("student_email_id")
+			):
 				self._rename_linked_user(new_email)
 			return
 
@@ -275,11 +284,35 @@ class CustomStudent(Student):
 				)
 			)
 
-		old_user = self.user
-		frappe.rename_doc("User", old_user, new_email, force=True, show_alert=False)
-		self.user = new_email
+		# The background rename skips the owner/modified_by rewrite, which is only
+		# safe for an account that has never been used. A student who has logged in
+		# may own documents, so leave that User alone and say so.
+		if frappe.db.get_value("User", self.user, "last_login"):
+			frappe.msgprint(
+				frappe._(
+					"User {0} has logged in before, so it was not renamed to {1}. "
+					"An administrator can rename it from the User list."
+				).format(self.user, new_email),
+				indicator="orange",
+			)
+			return
+
+		# Renaming a User rewrites links/owner/modified_by across ~1000 tables, which
+		# takes long enough inside a web request to hold row locks and time out
+		# later saves. Do it in a background job once this save has committed.
+		# Idempotent: the job re-reads the student's current email.
+		frappe.enqueue(
+			"srkr_frappe_app_api.overrides.rename_student_user",
+			queue="long",
+			timeout=1800,
+			enqueue_after_commit=True,
+			job_id=f"rename-student-user-{self.name}",
+			deduplicate=True,
+			student=self.name,
+		)
 		frappe.msgprint(
-			frappe._("User {0} renamed to {1}").format(old_user, new_email), alert=True
+			frappe._("The linked user will be renamed to {0} in the background.").format(new_email),
+			alert=True,
 		)
 
 	def _create_disabled_user(self, email):
@@ -299,3 +332,47 @@ class CustomStudent(Student):
 		user.flags.no_welcome_mail = True
 		user.save(ignore_permissions=True)
 		self.user = user.name
+
+
+def rename_student_user(student):
+	"""Background job: rename the Student's linked User to the Student's current email."""
+	row = frappe.db.get_value("Student", student, ["user", "student_email_id"], as_dict=True)
+	if not row or not row.user or not row.student_email_id:
+		return
+
+	new_email = row.student_email_id.strip().lower()
+	if row.user.lower() == new_email:
+		return
+	if frappe.db.exists("User", new_email):
+		frappe.log_error(
+			f"Cannot rename user {row.user} for {student}: {new_email} already exists",
+			"Student user rename",
+		)
+		return
+	if frappe.db.get_value("User", row.user, "last_login"):
+		return
+
+	frappe.flags.in_student_user_rename = True
+	try:
+		frappe.rename_doc("User", row.user, new_email, force=True, show_alert=False)
+	finally:
+		frappe.flags.in_student_user_rename = False
+
+
+class CustomUser(User):
+	"""User that skips the owner/modified_by sweep when renaming a student's user.
+
+	Stock User.after_rename runs one UPDATE per table over every table with
+	owner/modified_by (~2000 statements here), each a full scan, all in one
+	transaction. Student accounts have not logged in and own no documents, so the
+	sweep is skipped for the student-email rename job only; every other rename
+	behaves as stock.
+	"""
+
+	def after_rename(self, old_name, new_name, merge=False):
+		if not frappe.flags.get("in_student_user_rename"):
+			return super().after_rename(old_name, new_name, merge=merge)
+
+		if frappe.db.exists("Notification Settings", old_name):
+			frappe.rename_doc("Notification Settings", old_name, new_name, force=True, show_alert=False)
+		frappe.db.set_value("User", new_name, "email", new_name)
